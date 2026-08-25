@@ -1,0 +1,38 @@
+id = "andpeicunha.agent-view-filters"
+name = "agent-view-filters"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+platforms = ["macos", "linux"]
+description = "Cycle the Agents sidebar between active (working/blocked), current-space, and all agents."
+
+[[build]]
+platforms = ["macos", "linux"]
+command = ["bash", "install.sh"]
+
+[[actions]]
+id = "active"
+title = "agent view: active (working/blocked)"
+contexts = ["global"]
+command = ["bash", "run.sh", "active"]
+
+[[actions]]
+id = "space"
+title = "agent view: current space"
+contexts = ["global"]
+command = ["bash", "run.sh", "space"]
+
+[[actions]]
+id = "all"
+title = "agent view: all agents"
+contexts = ["global"]
+command = ["bash", "run.sh", "all"]
+
+[[actions]]
+id = "cycle"
+title = "agent view: cycle active -> space -> all"
+contexts = ["global"]
+command = ["bash", "run.sh", "cycle"]
+
+[[events]]
+on = "workspace.focused"
+command = ["bash", "run.sh", "sync"]
