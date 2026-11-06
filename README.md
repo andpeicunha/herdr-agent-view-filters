@@ -1,8 +1,43 @@
 # agent-view-filters
 
-Local Herdr plugin (needs Herdr >= 0.9.5) that switches the Agents sidebar
-between four declarative views, since Herdr has no native config for filtering
-the sidebar by agent activity, current space, or a hand-picked set.
+A [Herdr](https://herdr.io) plugin that filters the Agents sidebar by agent
+activity, current space, or a hand-picked set, and lets you set your own agent
+order. Herdr has no native config for these views.
+
+Requires Herdr >= 0.9.5. Python 3 only; no extra packages.
+
+## Features
+
+- Three filtered views: `active` (working/blocked), `space` (current space) and
+  `picked` (everything except the agents you unticked). `all` clears the view
+  back to Herdr's native order.
+- A picker popup to choose agents and reorder them by hand.
+- A stable sort: filtered views follow your space order, so the sidebar no
+  longer reshuffles when agent status changes.
+
+## Installation
+
+```sh
+herdr plugin install andpeicunha/herdr-agent-view-filters
+```
+
+## Usage
+
+Bind the `cycle` and `pick` actions in `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+f"
+type = "plugin_action"
+command = "andpeicunha.agent-view-filters.cycle"
+description = "agent-view-filters: cycle view"
+
+[[keys.command]]
+key = "prefix+p"
+type = "plugin_action"
+command = "andpeicunha.agent-view-filters.pick"
+description = "agent-view-filters: pick agents"
+```
 
 ## Modes (cycled by `prefix+f`)
 
@@ -157,7 +192,6 @@ agent state in a future release.
 - `run.sh` is the manifest entrypoint, dispatches into the Python script.
 - `pick.sh` opens the popup through the socket (`plugin.pane.open`,
   placement `popup`; the CLI has no popup placement).
-- `install.sh` copies the plugin into `~/.config/herdr/plugins/agent-view-filters/`.
 
 ## Manual testing
 
@@ -171,16 +205,14 @@ herdr plugin action invoke cycle  --plugin andpeicunha.agent-view-filters
 herdr plugin log list --plugin andpeicunha.agent-view-filters   # inspect stdout/exit codes
 ```
 
-## Keybind
-
-`prefix+f` -> `...cycle`, `prefix+p` -> `...pick` (see `herdr/config.toml`).
-
 ## History
 
-- Superseded `ShankyJS/herdr-space-scoped-agents` (a community plugin that only
-  did the `current space / all` toggle) — uninstalled once this plugin's
-  `space` mode covered the same behavior plus `active`.
-- Built after confirming Herdr has no native `ui.agent_panel_scope` config
-  (proposed but not merged — see upstream discussion
-  [herdrdev/herdr#1406](https://github.com/herdrdev/herdr/discussions/1406))
-  and no native way to filter the sidebar by agent activity/type.
+- Built because Herdr has no native `ui.agent_panel_scope` config (proposed,
+  not merged: [herdrdev/herdr#1406](https://github.com/herdrdev/herdr/discussions/1406))
+  and no native way to filter the sidebar by agent activity or type.
+- Replaces the community plugin `ShankyJS/herdr-space-scoped-agents`, whose
+  `current space / all` toggle is covered by the `space` mode.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
