@@ -5,8 +5,8 @@ target="$plugin_dir/agent-view-filters"
 source_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 
 mkdir -p "$target/bin"
-cp "$source_dir/herdr-plugin.toml" "$source_dir/run.sh" "$target/"
-cp "$source_dir/bin/agent_view.py" "$target/bin/"
-chmod +x "$target/run.sh" "$target/bin/agent_view.py"
+cp "$source_dir/herdr-plugin.toml" "$source_dir/run.sh" "$source_dir/pick.sh" "$target/"
+cp "$source_dir/bin/agent_view.py" "$source_dir/bin/picker.py" "$target/bin/"
+chmod +x "$target/run.sh" "$target/pick.sh" "$target/bin/agent_view.py" "$target/bin/picker.py"
 
 printf 'installed andpeicunha.agent-view-filters to %s\n' "$target"

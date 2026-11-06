@@ -1,13 +1,19 @@
 id = "andpeicunha.agent-view-filters"
 name = "agent-view-filters"
-version = "0.1.0"
-min_herdr_version = "0.7.5"
+version = "0.4.0"
+min_herdr_version = "0.9.5"
 platforms = ["macos", "linux"]
-description = "Cycle the Agents sidebar between active (working/blocked), current-space, and all agents."
+description = "Cycle the Agents sidebar between active (working/blocked), current-space, picked (exclusion list from a popup) and all agents."
 
 [[build]]
 platforms = ["macos", "linux"]
 command = ["bash", "install.sh"]
+
+[[panes]]
+id = "picker"
+title = "agent view: pick agents"
+placement = "popup"
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/bin/picker.py\""]
 
 [[actions]]
 id = "active"
@@ -22,6 +28,18 @@ contexts = ["global"]
 command = ["bash", "run.sh", "space"]
 
 [[actions]]
+id = "picked"
+title = "agent view: picked agents (exclusion list)"
+contexts = ["global"]
+command = ["bash", "run.sh", "picked"]
+
+[[actions]]
+id = "pick"
+title = "agent view: pick agents (popup)"
+contexts = ["global"]
+command = ["bash", "pick.sh"]
+
+[[actions]]
 id = "all"
 title = "agent view: all agents"
 contexts = ["global"]
@@ -29,10 +47,26 @@ command = ["bash", "run.sh", "all"]
 
 [[actions]]
 id = "cycle"
-title = "agent view: cycle active -> space -> all"
+title = "agent view: cycle active -> space -> picked -> all"
 contexts = ["global"]
 command = ["bash", "run.sh", "cycle"]
 
 [[events]]
 on = "workspace.focused"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "pane.created"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "tab.renamed"
 command = ["bash", "run.sh", "sync"]

@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""agent-view-filters picker: curses TUI to untick agents hidden from the sidebar.
+
+Checked = visible (not excluded). Enter saves `excluded` to state.json and
+applies the `picked` view; q/Esc cancels without saving.
+"""
+import curses
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import agent_view as av  # noqa: E402
+
+WORKING = {"working": 0, "blocked": 0}
+
+GLYPH = "●"
+BOLD_STATUS = {"working", "blocked"}
+STATUS_PAIR = {"working": 1, "done": 2, "blocked": 3, "idle": 4}
+REPO_PAIR = 5  # repo na linha 1 quando marcado: ciano claro (sem DIM)
+STATUS_FG = {1: curses.COLOR_YELLOW, 2: curses.COLOR_BLUE,
+             3: curses.COLOR_RED, 4: curses.COLOR_GREEN}
+LEGEND = ("working", "done", "blocked", "idle")
+
+
+def build_rows():
+    agents = av.list_agents()
+    if agents is None:
+        sys.stderr.write("agent-view-filters: cannot list agents\n")
+        sys.exit(1)
+    ws = av.list_workspaces()
+    # Labels são opcionais: falha aqui cai no comportamento anterior (título).
+    ctx = av.name_context()
+    excluded = set(av.read_excluded())
+    rows = []
+    for a in agents:
+        cwd = a.get("foreground_cwd") or a.get("cwd") or ""
+        title = a.get("terminal_title_stripped") or a.get("terminal_title") or ""
+        name = av.agent_name(a, ctx)
+        rows.append({
+            "pane_id": a.get("pane_id", ""),
+            "repo": os.path.basename(cwd.rstrip("/")) or cwd or "-",
+            "name": name,
+            "title": title,
+            "status": a.get("agent_status") or "unknown",
+            "ws": ws.get(a.get("workspace_id"), a.get("workspace_id", "")),
+            "agent": a.get("agent") or "",
+            "seq": a.get("state_change_seq") or 0,
+            "checked": a.get("pane_id") not in excluded,
+        })
+    return rows, excluded
+
+
+def rank(r):
+    st = 0 if r["status"] in WORKING else 1
+    return (0 if r["checked"] else 1, st, -r["seq"])
+
+
+def resort(rows, keep_pane=None):
+    rows.sort(key=rank)
+
+
+def init_colors():
+    """Set up status color pairs. Returns False (glyph-only mode) on any failure."""
+    try:
+        if not curses.has_colors():
+            return False
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+            bg = -1
+        except curses.error:
+            bg = curses.COLOR_BLACK
+        for pid, fg in STATUS_FG.items():
+            curses.init_pair(pid, fg, bg)
+        curses.init_pair(REPO_PAIR, curses.COLOR_CYAN, bg)
+        return True
+    except curses.error:
+        return False
+
+
+def status_attr(status, colors):
+    """Attr for the status glyph/text. Colorless terminals get no attr."""
+    if not colors:
+        return 0
+    pid = STATUS_PAIR.get(status)
+    if pid is None:
+        return curses.A_DIM  # unknown: default dim
+    return curses.color_pair(pid) | (curses.A_BOLD if status in BOLD_STATUS else 0)
+
+
+def put(stdscr, y, x, text, attr, w):
+    """Clipped addnstr that never raises on the screen edge; returns next x."""
+    if text and x < w - 1:
+        stdscr.addnstr(y, x, text, w - 1 - x, attr)
+    return x + len(text)
+
+
+def run(stdscr, rows):
+    try:
+        curses.curs_set(0)  # terminais como vt100 não suportam
+    except curses.error:
+        pass
+    stdscr.keypad(True)
+    colors = init_colors()
+    query = ""
+    searching = False
+    cur = 0
+    top = 0
+    # Sort once at start; do not reshuffle while toggling (avoids jumping rows).
+    resort(rows)
+
+    def visible():
+        q = query.lower()
+        if not q:
+            return rows
+        return [r for r in rows if q in " ".join(
+            [r["repo"], r["name"], r["title"], r["status"], r["ws"], r["agent"]]).lower()]
+
+    while True:
+        vis = visible()
+        cur = max(0, min(cur, len(vis) - 1)) if vis else 0
+        h, w = stdscr.getmaxyx()
+        # Itens visíveis: cada item ocupa 3 linhas (repo, detalhe, separador).
+        # Layout: linha 0 header, linha 1 em branco, lista a partir da linha 2.
+        body = max(1, (h - 4) // 3)
+        if cur < top:
+            top = cur
+        if cur >= top + body:
+            top = cur - body + 1
+        stdscr.erase()
+        n_on = sum(1 for r in rows if r["checked"])
+        head = f" agents shown: {n_on}/{len(rows)}"
+        if query or searching:
+            head += f"   /{query}{'_' if searching else ''}"
+        try:
+            stdscr.addnstr(0, 0, head.ljust(w), w - 1, curses.A_BOLD)
+            # Legenda no canto direito do header; omitida se não couber.
+            legend = []
+            for j, s in enumerate(LEGEND):
+                if j:
+                    legend.append(("  ", 0))
+                legend.append((GLYPH, status_attr(s, colors)))
+                legend.append((f" {s}", curses.A_DIM))
+            lw = sum(len(t) for t, _ in legend)
+            lx = w - 1 - lw
+            if lx > len(head) + 2:
+                for t, a in legend:
+                    lx = put(stdscr, 0, lx, t, a, w)
+            for i, r in enumerate(vis[top:top + body]):
+                idx = top + i
+                y = 2 + 3 * i
+                mark = "[x]" if r["checked"] else "[ ]"
+                rev = curses.A_REVERSE if idx == cur else 0
+                attr1 = rev | (curses.A_BOLD if r["checked"] else curses.A_DIM)
+                attr2 = rev | curses.A_DIM
+                sattr = status_attr(r["status"], colors) | rev
+                # Repo claro quando marcado; desmarcado segue DIM como o resto.
+                if not r["checked"]:
+                    repo_attr = rev | curses.A_DIM
+                elif colors:
+                    repo_attr = rev | curses.color_pair(REPO_PAIR)
+                else:
+                    repo_attr = rev | curses.A_NORMAL
+                # Linha 1: fundo, "  [x] ", bolinha, " <space>", "  <repo>".
+                # Sem space: o repo ocupa a posição do space, sem repetir.
+                put(stdscr, y, 0, " " * w, attr1, w)
+                x = put(stdscr, y, 0, f"  {mark} ", attr1, w)
+                x = put(stdscr, y, x, GLYPH, sattr, w)
+                if r["ws"]:
+                    x = put(stdscr, y, x, f" {r['ws']}", attr1, w)
+                    x = put(stdscr, y, x, "  ", attr1, w)
+                    put(stdscr, y, x, r["repo"], repo_attr, w)
+                else:
+                    put(stdscr, y, x, f" {r['repo']}", attr1, w)
+                # Linha 2: nome [· título em DIM]. Space já está na linha 1.
+                # O título só aparece como nome se não houver nome, ou como
+                # sufixo dim quando não está contido no nome.
+                put(stdscr, y + 1, 0, " " * w, attr2, w)
+                shown = r["name"] or r["title"]
+                x = put(stdscr, y + 1, 0, f"      {shown}", attr2, w)
+                if r["name"] and r["title"] and r["title"].lower() not in r["name"].lower():
+                    put(stdscr, y + 1, x, f"  ·  {r['title']}", attr2, w)
+            foot = " j/k move  space toggle  / search  a all  n none  enter save  q cancel"
+            stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_DIM)
+        except curses.error:
+            pass
+        stdscr.refresh()
+
+        k = stdscr.getch()
+        if searching:
+            if k in (27,):
+                searching = False
+                query = ""
+            elif k in (10, 13, curses.KEY_ENTER):
+                searching = False
+            elif k in (curses.KEY_BACKSPACE, 127, 8):
+                query = query[:-1]
+            elif k in (curses.KEY_UP,):
+                cur -= 1
+            elif k in (curses.KEY_DOWN,):
+                cur += 1
+            elif 32 <= k < 127:
+                query += chr(k)
+                cur = 0
+            continue
+        if k in (ord("q"), 27):
+            if k == 27 and query:
+                query = ""
+                continue
+            return False
+        if k in (curses.KEY_UP, ord("k")):
+            cur -= 1
+        elif k in (curses.KEY_DOWN, ord("j")):
+            cur += 1
+        elif k == curses.KEY_PPAGE:
+            cur -= body
+        elif k == curses.KEY_NPAGE:
+            cur += body
+        elif k in (curses.KEY_HOME, ord("g")):
+            cur = 0
+        elif k in (curses.KEY_END, ord("G")):
+            cur = len(vis) - 1
+        elif k == ord(" ") and vis:
+            vis[cur]["checked"] = not vis[cur]["checked"]
+        elif k == ord("/"):
+            searching = True
+        elif k == ord("a"):
+            for r in vis:
+                r["checked"] = True
+        elif k == ord("n"):
+            for r in vis:
+                r["checked"] = False
+        elif k in (10, 13, curses.KEY_ENTER):
+            return True
+
+
+def main():
+    rows, old_excluded = build_rows()
+    if not rows:
+        print("no agents")
+        return
+    save = curses.wrapper(run, rows)
+    if not save:
+        return
+    live = {r["pane_id"] for r in rows}
+    # Keep exclusions of panes not listed (none after prune, but be safe).
+    excluded = [r["pane_id"] for r in rows if not r["checked"]]
+    excluded += [p for p in old_excluded if p not in live]
+    av.write_state("picked", excluded)
+    av.apply_mode("picked", excluded)
+
+
+if __name__ == "__main__":
+    main()
