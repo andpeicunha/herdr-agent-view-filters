@@ -3,6 +3,10 @@
 
 Checked = visible (not excluded). Enter saves `excluded` to state.json and
 applies the `picked` view; q/Esc cancels without saving.
+
+Manual order: Shift+Up/Down (or K/J) move the item under the cursor, `r` goes
+back to following the space order. Enter also saves `order` (the displayed
+list) when a manual order is active, or clears it after `r`.
 """
 import curses
 import os
@@ -10,8 +14,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agent_view as av  # noqa: E402
-
-WORKING = {"working": 0, "blocked": 0}
 
 GLYPH = "●"
 BOLD_STATUS = {"working", "blocked"}
@@ -28,6 +30,7 @@ def build_rows():
         sys.stderr.write("agent-view-filters: cannot list agents\n")
         sys.exit(1)
     ws = av.list_workspaces()
+    ws_idx = av.workspace_index()
     # Labels são opcionais: falha aqui cai no comportamento anterior (título).
     ctx = av.name_context()
     excluded = set(av.read_excluded())
@@ -44,19 +47,60 @@ def build_rows():
             "status": a.get("agent_status") or "unknown",
             "ws": ws.get(a.get("workspace_id"), a.get("workspace_id", "")),
             "agent": a.get("agent") or "",
-            "seq": a.get("state_change_seq") or 0,
+            "ws_idx": ws_idx.get(a.get("workspace_id"), len(ws_idx)),
             "checked": a.get("pane_id") not in excluded,
         })
-    return rows, excluded
+    return rows, excluded, av.read_order()
 
 
 def rank(r):
-    st = 0 if r["status"] in WORKING else 1
-    return (0 if r["checked"] else 1, st, -r["seq"])
+    # Ordem dos spaces na sidebar, depois repo, depois name. Estável na abertura.
+    return (r["ws_idx"], r["repo"].lower(), r["name"].lower())
 
 
-def resort(rows, keep_pane=None):
+def resort(rows, order=None):
+    """Default rank, then (if `order`) saved order first, new agents last."""
     rows.sort(key=rank)
+    if order:
+        by_id = {r["pane_id"]: r for r in rows}
+        seq = av.manual_sequence([r["pane_id"] for r in rows], order)
+        rows[:] = [by_id[p] for p in seq]
+
+
+SHIFT_UP = getattr(curses, "KEY_SR", 337)
+SHIFT_DOWN = getattr(curses, "KEY_SF", 336)
+MOVE_UP = {SHIFT_UP, getattr(curses, "KEY_SUP", -99), ord("K")}
+MOVE_DOWN = {SHIFT_DOWN, getattr(curses, "KEY_SDOWN", -99), ord("J")}
+RAW_SHIFT_UP = [91, 49, 59, 50, 65]    # ESC [ 1 ; 2 A
+RAW_SHIFT_DOWN = [91, 49, 59, 50, 66]  # ESC [ 1 ; 2 B
+IGNORED = -2
+
+
+def getkey(stdscr):
+    """getch() that decodes raw shift+arrows and tells a lone Esc from other
+    escape sequences (returned as IGNORED, never as cancel)."""
+    k = stdscr.getch()
+    if k != 27:
+        return k
+    stdscr.timeout(25)
+    seq = []
+    try:
+        while len(seq) < 8:
+            c = stdscr.getch()
+            if c == -1:
+                break
+            seq.append(c)
+            if c not in (91, 79, 59) and not 48 <= c <= 57:
+                break
+    finally:
+        stdscr.timeout(-1)
+    if not seq:
+        return 27
+    if seq == RAW_SHIFT_UP:
+        return SHIFT_UP
+    if seq == RAW_SHIFT_DOWN:
+        return SHIFT_DOWN
+    return IGNORED
 
 
 def init_colors():
@@ -95,7 +139,8 @@ def put(stdscr, y, x, text, attr, w):
     return x + len(text)
 
 
-def run(stdscr, rows):
+def run(stdscr, rows, order, result):
+    """Returns True to save. result["manual"] tells whether to store `order`."""
     try:
         curses.curs_set(0)  # terminais como vt100 não suportam
     except curses.error:
@@ -107,7 +152,9 @@ def run(stdscr, rows):
     cur = 0
     top = 0
     # Sort once at start; do not reshuffle while toggling (avoids jumping rows).
-    resort(rows)
+    manual = bool(order)
+    notice = ""
+    resort(rows, order)
 
     def visible():
         q = query.lower()
@@ -129,7 +176,8 @@ def run(stdscr, rows):
             top = cur - body + 1
         stdscr.erase()
         n_on = sum(1 for r in rows if r["checked"])
-        head = f" agents shown: {n_on}/{len(rows)}"
+        head = f" agents shown: {n_on}/{len(rows)}   order: " + (
+            "manual" if manual else "follows spaces")
         if query or searching:
             head += f"   /{query}{'_' if searching else ''}"
         try:
@@ -180,13 +228,20 @@ def run(stdscr, rows):
                 x = put(stdscr, y + 1, 0, f"      {shown}", attr2, w)
                 if r["name"] and r["title"] and r["title"].lower() not in r["name"].lower():
                     put(stdscr, y + 1, x, f"  ·  {r['title']}", attr2, w)
-            foot = " j/k move  space toggle  / search  a all  n none  enter save  q cancel"
-            stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_DIM)
+            foot = (" j/k nav  S-up/dn|J/K reorder  space toggle  / find  a all  n none"
+                    "  r reset order  enter save  q cancel")
+            if notice:
+                stdscr.addnstr(h - 1, 0, " " + notice, w - 1, curses.A_BOLD)
+            else:
+                stdscr.addnstr(h - 1, 0, foot, w - 1, curses.A_DIM)
         except curses.error:
             pass
         stdscr.refresh()
 
-        k = stdscr.getch()
+        k = getkey(stdscr)
+        notice = ""
+        if k == IGNORED:
+            continue
         if searching:
             if k in (27,):
                 searching = False
@@ -222,6 +277,17 @@ def run(stdscr, rows):
             cur = len(vis) - 1
         elif k == ord(" ") and vis:
             vis[cur]["checked"] = not vis[cur]["checked"]
+        elif k in MOVE_UP or k in MOVE_DOWN:
+            if query:
+                notice = "clear search (Esc) to reorder"
+            elif vis:
+                rows[:], cur = av.move_item(rows, cur, -1 if k in MOVE_UP else 1)
+                manual = True
+        elif k == ord("r"):
+            manual = False
+            resort(rows)
+            cur = 0
+            top = 0
         elif k == ord("/"):
             searching = True
         elif k == ord("a"):
@@ -231,22 +297,26 @@ def run(stdscr, rows):
             for r in vis:
                 r["checked"] = False
         elif k in (10, 13, curses.KEY_ENTER):
+            result["manual"] = manual
             return True
 
 
 def main():
-    rows, old_excluded = build_rows()
+    rows, old_excluded, order = build_rows()
     if not rows:
         print("no agents")
         return
-    save = curses.wrapper(run, rows)
+    result = {"manual": False}
+    os.environ.setdefault("ESCDELAY", "25")  # lone Esc cancels fast (keypad waits 1s)
+    save = curses.wrapper(run, rows, order, result)
     if not save:
         return
     live = {r["pane_id"] for r in rows}
     # Keep exclusions of panes not listed (none after prune, but be safe).
     excluded = [r["pane_id"] for r in rows if not r["checked"]]
     excluded += [p for p in old_excluded if p not in live]
-    av.write_state("picked", excluded)
+    new_order = [r["pane_id"] for r in rows] if result["manual"] else []
+    av.write_state("picked", excluded, new_order)
     av.apply_mode("picked", excluded)
 
 

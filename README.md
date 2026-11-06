@@ -17,22 +17,24 @@ can also be set directly: `active`, `space`, `picked`, `all`.
 
 ## Stable sort (filtered modes only)
 
-`active`, `space` and `picked` sort by **space A-Z, then repo A-Z, then name
-A-Z, then `pane_order`**, so the sidebar no longer reshuffles when agent status
-changes. `all` is untouched: it calls `agent.view.clear` and keeps Herdr's
-native priority order.
+`active`, `space` and `picked` sort by **space order (native `workspace_order`,
+i.e. the order you set by moving spaces in the sidebar), then repo A-Z, then
+name A-Z, then `pane_order`**, so the sidebar follows your space order and no
+longer reshuffles when agent status changes. `all` is untouched: it calls
+`agent.view.clear` and keeps Herdr's native priority order.
 
-How: the view sort is `[{token: space}, {token: repo}, {token: name}, pane_order]`
-(all asc). `publish_tokens()` writes three per-pane tokens through
-`pane.report_metadata` (source `plugin:andpeicunha.agent-view-filters`,
-`ttl_ms` = 86400000, the server max of 24h). All lowercase, capped at 128 chars:
+How: the view sort is `[workspace_order, {token: repo}, {token: name}, pane_order]`
+(all asc). `workspace_order` is a built-in field, so moving a space reorders the
+sidebar on its own (no `workspace.moved` hook needed). `publish_tokens()` writes
+two per-pane tokens through `pane.report_metadata` (source
+`plugin:andpeicunha.agent-view-filters`, `ttl_ms` = 86400000, the server max of
+24h). Lowercase, capped at 128 chars:
 
-- `space` = label of the workspace/space (`workspace.list`; falls back to repo)
 - `repo` = basename of `foreground_cwd` (fallback `cwd`)
 - `name` = tab/pane name, see "Name rule" below
 
-The old `title` token is no longer used; it is reported as `null` on every sync
-so a stale one is cleared.
+The old `title` and `space` tokens are no longer used; both are reported as
+`null` on every sync so stale ones are cleared.
 
 Tokens are visible in `agent.list` / `pane.get` (`tokens`). They are renewed on
 every `sync` and whenever a filtered mode is applied; if nothing syncs for 24h
@@ -50,14 +52,14 @@ One rule, shared by the sort token and the picker (`display_name()` /
 
 Limitations:
 
-- Tokens only refresh on `sync` (`workspace.focused`, `workspace.renamed`,
+- `repo`/`name` tokens only refresh on `sync` (`workspace.focused`, `workspace.renamed`,
   `tab.renamed`, `pane.agent_detected`, `pane.created`, or re-applying a mode).
   A pane rename or a changed terminal title is picked up at the next sync, not
   instantly (no `pane.*renamed` event is used). There is deliberately no hook
   on `pane.agent_status_changed` (it fires constantly).
 - Panes without tokens (not yet synced) sort per Herdr's missing-value rule,
   until the next sync.
-- The picker keeps its own internal order (unchanged).
+- The picker orders by space position (see Picker); it does not use tokens.
 
 ## Picker (`pick` action, `prefix+p`)
 
@@ -72,20 +74,58 @@ the sidebar. Each agent takes two lines:
 - line 2: tab/pane name (see "Name rule"), plus the terminal title as a dim
   suffix when it is not already part of the name.
 
-Keys: `up/down` or `j/k` move, `space` toggle, `/` search (Enter keeps the
+Keys: `up/down` or `j/k` move, `Shift+up/down` (or `K`/`J`) reorder the item
+under the cursor, `r` reset to space order, `space` toggle, `/` search (Enter keeps the
 filter, Esc clears), `a` check all (visible rows), `n` uncheck all (visible
 rows), `Enter` save + switch to `picked` + close, `q`/`Esc` cancel without
-saving. Order: checked first, then working/blocked, idle last (fixed at open,
-rows do not jump while toggling).
+saving. Initial order: the saved manual order (see "Manual order") if any, else space position in the sidebar (`number` from `workspace.list`, which
+follows manual reordering), then repo A-Z, then name A-Z. Fixed at open; rows do
+not jump while toggling (no "checked first", no status rank).
+
+### Manual order
+
+Build your own agent order in the picker and the sidebar follows it.
+
+- `Shift+up` / `Shift+down` move the item under the cursor one position and the
+  cursor follows it. Fallback without shift support: `K` (up) / `J` (down).
+  Raw `ESC [ 1 ; 2 A/B` is decoded too when curses does not map it.
+- Disabled while a search query is active (footer shows a short notice).
+- The header shows `order: manual` or `order: follows spaces`.
+- `r` goes back to following the space order (default rank); it clears `order`
+  when you press Enter. Moving again re-enables manual order.
+- `Enter` saves `excluded` as before and also `order` = the full list of
+  pane_ids as displayed (when manual is active), or `order: []` after `r`.
+  `q`/`Esc` saves nothing.
+- Stored in state.json as `order` (list of pane_id). Empty or missing (old
+  state) = no manual order, previous behavior. `excluded` and `order` are
+  independent and can coexist.
+- Sidebar: with a non-empty `order`, `active`/`space`/`picked` sort by
+  `[{token: order}, pane_order]`; `publish_tokens()` writes an `order` token (4
+  digits, zero padded) on every agent pane: saved panes get their index, panes
+  not in `order` (new agents) get the following indexes in default rank
+  (space, repo, name), so **a new agent goes to the end**. Without manual order
+  the token is published as `null`. `all` is untouched (native order).
+- New agents are not written into `order` automatically; they stay at the end
+  (via token) until you save the picker again, which persists them. Trade-off:
+  not persisting keeps `order` equal to what you chose, and the position of new
+  agents still follows default rank among themselves.
+- `sync` prunes pane_ids of dead panes from `order` (like `excluded`).
+- `picked` with nothing excluded and a manual order keeps a match-all view
+  (instead of clearing like `all`) so the manual sort applies.
+
+Limitations: while manual order is on, moving a space does not move its agents
+(the order is per pane, not per space); press `r` in the picker to follow
+spaces again. Shift+up/down must reach the popup process; Herdr itself only
+binds shift+left/right (tabs) in this setup.
 
 ### Exclusion model
 
-`$HERDR_PLUGIN_STATE_DIR/state.json` holds `{"mode": ..., "excluded": [pane_id,...]}`.
+`$HERDR_PLUGIN_STATE_DIR/state.json` holds `{"mode": ..., "excluded": [pane_id,...], "order": [pane_id,...]}`.
 The `picked` view is `not(pane_id in excluded)`, so a **new agent shows up
 automatically**; only unticked ones disappear. With an empty `excluded` the
 view is cleared (same as `all`). On every `sync` (workspace focus) and on
 `picked`/`cycle` into picked, ids of panes that no longer exist are pruned.
-An old state.json without `excluded` is read as empty.
+An old state.json without `excluded` or `order` is read as empty.
 
 ## Why not a time window (e.g. "active in the last 12h")?
 
@@ -105,7 +145,7 @@ agent state in a future release.
 - `herdr-plugin.toml` declares 6 actions (`active`, `space`, `picked`, `all`,
   `cycle`, `pick`), the `picker` popup pane, plus event hooks
   (`workspace.focused`, `workspace.renamed`, `tab.renamed`, `pane.agent_detected`,
-  `pane.created`) that re-run
+  `pane.created`; no `workspace.moved`/`tab.moved`: space order is native) that re-run
   `sync` (re-publishes sort tokens and re-applies whichever mode is currently
   persisted) — this keeps the mode "sticky" across space changes, keeps new
   panes sorted, and re-asserts it after a server restart (on first event).

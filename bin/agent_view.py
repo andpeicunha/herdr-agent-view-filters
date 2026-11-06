@@ -7,8 +7,9 @@ Modes:
   picked - every agent except those the user excluded in the picker popup
   all    - clear the view, show everything (native default)
 
-Filtered modes use a stable sort (space A-Z, repo A-Z, name A-Z, layout)
-based on per-pane tokens that publish_tokens() refreshes on every sync / mode apply. "all"
+Filtered modes use a stable sort (native workspace_order = sidebar space order,
+repo A-Z, name A-Z, layout), or the manual `order` token when the picker saved
+a manual order; both based on per-pane tokens that publish_tokens() refreshes on every sync / mode apply. "all"
 clears the view and keeps Herdr's native priority order.
 
 State (which mode is "on") persists in $HERDR_PLUGIN_STATE_DIR/state.json so
@@ -35,12 +36,20 @@ FILTERS = {
     },
 }
 
-# Stable order for the filtered modes: space, repo, name (all A-Z), then layout.
-# "space"/"repo"/"name" are per-pane tokens written by publish_tokens().
+# Stable order for the filtered modes: space order (native, follows manual
+# reordering in the sidebar), repo, name (A-Z), then layout.
+# "repo"/"name" are per-pane tokens written by publish_tokens().
 SORT = [
-    {"field": {"token": "space"}, "order": "asc"},
+    {"field": "workspace_order", "order": "asc"},
     {"field": {"token": "repo"}, "order": "asc"},
     {"field": {"token": "name"}, "order": "asc"},
+    {"field": "pane_order", "order": "asc"},
+]
+
+# Manual order (picker): `order` token is a zero-padded index published by
+# publish_tokens() on every pane, so a plain asc sort follows the saved list.
+SORT_MANUAL = [
+    {"field": {"token": "order"}, "order": "asc"},
     {"field": "pane_order", "order": "asc"},
 ]
 
@@ -65,11 +74,15 @@ def read_state():
     return {}
 
 
-def write_state(mode, excluded):
+def write_state(mode, excluded, order=None):
+    """Atomic write. order=None keeps the stored manual order; [] clears it."""
+    if order is None:
+        order = read_order()
     path = state_path()
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"mode": mode, "excluded": sorted(set(excluded))}, f)
+        json.dump({"mode": mode, "excluded": sorted(set(excluded)),
+                   "order": list(order)}, f)
     os.replace(tmp, path)
 
 
@@ -85,12 +98,55 @@ def read_excluded():
     return []
 
 
+def read_order():
+    """Manual order: list of pane_ids ([] = follow space order). Old state -> []."""
+    od = read_state().get("order")
+    if isinstance(od, list):
+        seen = set()
+        out = []
+        for x in od:
+            if isinstance(x, str) and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+    return []
+
+
+def manual_sequence(ranked_ids, order):
+    """Pure. Saved `order` first (only ids in ranked_ids), then the rest
+    (new agents) at the end in ranked (default rank) order."""
+    live = set(ranked_ids)
+    seq = []
+    seen = set()
+    for p in order:
+        if p in live and p not in seen:
+            seen.add(p)
+            seq.append(p)
+    seq += [p for p in ranked_ids if p not in seen]
+    return seq
+
+
+def move_item(items, idx, delta):
+    """Pure. Move items[idx] by delta (+/-1) -> (new_list, new_idx).
+    Out of range: unchanged."""
+    j = idx + delta
+    if not (0 <= idx < len(items)) or not (0 <= j < len(items)):
+        return list(items), idx
+    out = list(items)
+    out[idx], out[j] = out[j], out[idx]
+    return out, j
+
+
 def write_mode(mode):
     write_state(mode, read_excluded())
 
 
 def write_excluded(excluded):
     write_state(read_mode(), excluded)
+
+
+def write_order(order):
+    write_state(read_mode(), read_excluded(), list(order))
 
 
 def socket_path():
@@ -128,6 +184,22 @@ def list_workspaces():
     try:
         d = json.loads(send({"id": "avf_ws", "method": "workspace.list", "params": {}}))
         return {w["workspace_id"]: w.get("label", "") for w in d["result"]["workspaces"]}
+    except (KeyError, ValueError, OSError, TypeError):
+        return {}
+
+
+def workspace_index():
+    """workspace_id -> position in the sidebar (0-based), or {} on failure.
+
+    workspace.list comes in sidebar order; `number` (1-based) is that position.
+    """
+    try:
+        d = json.loads(send({"id": "avf_wsi", "method": "workspace.list", "params": {}}))
+        out = {}
+        for i, w in enumerate(d["result"]["workspaces"]):
+            n = w.get("number")
+            out[w["workspace_id"]] = (n - 1) if isinstance(n, int) else i
+        return out
     except (KeyError, ValueError, OSError, TypeError):
         return {}
 
@@ -198,9 +270,12 @@ def agent_name(a, ctx):
 
 
 def publish_tokens(agents=None):
-    """Write `space`, `repo` and `name` tokens on every agent pane (for SORT).
+    """Write `repo`, `name` and `order` tokens on every agent pane (for SORT).
 
-    The old `title` token is cleared (null) so a stale one never lingers.
+    `order` is a 4-digit index when a manual order exists (saved panes by their
+    position, new panes after them in default rank), else null (cleared).
+
+    The old `title` and `space` tokens are cleared (null) so stale ones never linger.
     Best effort: a failing/dead pane is skipped, never raised. Returns the
     number of panes written.
     """
@@ -208,8 +283,22 @@ def publish_tokens(agents=None):
         agents = list_agents()
     if not agents:
         return 0
-    ws = list_workspaces()
     ctx = name_context()
+    manual = read_order()
+    order_idx = {}
+    if manual:
+        ws_idx = workspace_index()
+        keyed = []
+        for a in agents:
+            pid = a.get("pane_id")
+            if not pid:
+                continue
+            cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
+            keyed.append((ws_idx.get(a.get("workspace_id"), len(ws_idx)),
+                          os.path.basename(cwd).lower(),
+                          agent_name(a, ctx).lower(), pid))
+        ranked = [k[3] for k in sorted(keyed)]
+        order_idx = {p: i for i, p in enumerate(manual_sequence(ranked, manual))}
     n = 0
     for a in agents:
         pane_id = a.get("pane_id")
@@ -217,11 +306,11 @@ def publish_tokens(agents=None):
             continue
         cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
         repo = os.path.basename(cwd)
-        space = ws.get(a.get("workspace_id")) or repo
         tokens = {
-            "space": _token_value(space),
+            "space": None,
             "repo": _token_value(repo),
             "name": _token_value(agent_name(a, ctx)),
+            "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
             "title": None,
         }
         try:
@@ -257,11 +346,35 @@ def prune_excluded():
     return kept
 
 
+def prune_order():
+    """Drop `order` pane_ids that no longer exist. Skips on listing failure.
+
+    New agents are NOT persisted: they sit at the end (via tokens) until the
+    user saves the picker again.
+    """
+    od = read_order()
+    if not od:
+        return od
+    agents = list_agents()
+    if agents is None:
+        return od
+    live = {a.get("pane_id") for a in agents}
+    kept = [p for p in od if p in live]
+    if len(kept) != len(od):
+        write_order(kept)
+    return kept
+
+
 def apply_mode(mode, excluded=None):
+    manual = bool(read_order())
     if mode == "picked":
         if excluded is None:
             excluded = read_excluded()
-        if not excluded:
+        if not excluded and manual:
+            # Keep a (match-everything) view so the manual sort still applies.
+            flt = {"op": "not", "filter": {"op": "in", "field": "pane_id",
+                                           "values": ["__none__"]}}
+        elif not excluded:
             mode = "all"
         else:
             flt = {"op": "not", "filter": {"op": "in", "field": "pane_id", "values": list(excluded)}}
@@ -279,7 +392,7 @@ def apply_mode(mode, excluded=None):
                 "source": SOURCE,
                 "label": mode,
                 "filter": flt,
-                "sort": SORT,
+                "sort": SORT_MANUAL if manual else SORT,
             },
         })
     return resp
@@ -291,6 +404,7 @@ def main():
     if action == "sync":
         mode = read_mode()
         excluded = prune_excluded()
+        prune_order()
         apply_mode(mode, excluded)
         print(f"agent-view-filters: synced -> {mode}")
         return
@@ -305,6 +419,7 @@ def main():
         sys.exit(2)
 
     excluded = prune_excluded() if mode == "picked" else None
+    prune_order()
     apply_mode(mode, excluded)
     write_mode(mode)
     print(f"agent-view-filters: mode -> {mode}")
