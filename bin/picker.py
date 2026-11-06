@@ -4,8 +4,9 @@
 Checked = visible (not excluded). Enter saves `excluded` to state.json and
 applies the `picked` view; q/Esc cancels without saving.
 
-Manual order: Shift+Up/Down (or K/J) move the item under the cursor, `r` goes
-back to following the space order. Enter also saves `order` (the displayed
+Manual order (picked view only): spaces always follow the live sidebar order;
+Shift+Up/Down (or K/J) move the item under the cursor only inside its own space,
+`r` goes back to the default order. Enter also saves `order` (the displayed
 list) when a manual order is active, or clears it after `r`.
 """
 import curses
@@ -53,18 +54,13 @@ def build_rows():
     return rows, excluded, av.read_order()
 
 
-def rank(r):
-    # Ordem dos spaces na sidebar, depois repo, depois name. Estável na abertura.
-    return (r["ws_idx"], r["repo"].lower(), r["name"].lower())
-
-
 def resort(rows, order=None):
-    """Default rank, then (if `order`) saved order first, new agents last."""
-    rows.sort(key=rank)
-    if order:
-        by_id = {r["pane_id"]: r for r in rows}
-        seq = av.manual_sequence([r["pane_id"] for r in rows], order)
-        rows[:] = [by_id[p] for p in seq]
+    """Spaces in live sidebar order; inside each, saved order first, then new
+    agents by repo/name."""
+    by_id = {r["pane_id"]: r for r in rows}
+    seq = av.space_sequence(
+        [(r["pane_id"], r["ws_idx"], r["repo"], r["name"]) for r in rows], order or [])
+    rows[:] = [by_id[p] for p in seq]
 
 
 SHIFT_UP = getattr(curses, "KEY_SR", 337)
@@ -177,7 +173,7 @@ def run(stdscr, rows, order, result):
         stdscr.erase()
         n_on = sum(1 for r in rows if r["checked"])
         head = f" agents shown: {n_on}/{len(rows)}   order: " + (
-            "manual" if manual else "follows spaces")
+            "manual (per space)" if manual else "follows spaces")
         if query or searching:
             head += f"   /{query}{'_' if searching else ''}"
         try:
@@ -281,8 +277,15 @@ def run(stdscr, rows, order, result):
             if query:
                 notice = "clear search (Esc) to reorder"
             elif vis:
-                rows[:], cur = av.move_item(rows, cur, -1 if k in MOVE_UP else 1)
-                manual = True
+                by_id = {r["pane_id"]: r for r in rows}
+                ids, cur, moved = av.move_in_space(
+                    [r["pane_id"] for r in rows], cur, -1 if k in MOVE_UP else 1,
+                    lambda p: by_id[p]["ws_idx"])
+                if moved:
+                    rows[:] = [by_id[p] for p in ids]
+                    manual = True
+                else:
+                    notice = "space boundary: can only reorder within a space"
         elif k == ord("r"):
             manual = False
             resort(rows)

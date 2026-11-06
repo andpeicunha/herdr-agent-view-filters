@@ -8,9 +8,10 @@ Modes:
   all    - clear the view, show everything (native default)
 
 Filtered modes use a stable sort (native workspace_order = sidebar space order,
-repo A-Z, name A-Z, layout), or the manual `order` token when the picker saved
-a manual order; both based on per-pane tokens that publish_tokens() refreshes on every sync / mode apply. "all"
-clears the view and keeps Herdr's native priority order.
+repo A-Z, name A-Z, layout), based on per-pane tokens that publish_tokens()
+refreshes on every sync / mode apply. Only `picked` honors the manual order
+saved by the picker, and only INSIDE each space (spaces always follow the live
+sidebar order). "all" clears the view and keeps Herdr's native priority order.
 
 State (which mode is "on") persists in $HERDR_PLUGIN_STATE_DIR/state.json so
 the workspace.focused hook can re-assert it after space switches / restarts.
@@ -46,10 +47,15 @@ SORT = [
     {"field": "pane_order", "order": "asc"},
 ]
 
-# Manual order (picker): `order` token is a zero-padded index published by
-# publish_tokens() on every pane, so a plain asc sort follows the saved list.
+# Manual order (picker, `picked` mode only): `order` token is the zero-padded
+# position of the pane INSIDE its space, published by publish_tokens(). Spaces
+# always come first (live sidebar order); repo/name break ties for panes
+# without a manual position.
 SORT_MANUAL = [
+    {"field": "workspace_order", "order": "asc"},
     {"field": {"token": "order"}, "order": "asc"},
+    {"field": {"token": "repo"}, "order": "asc"},
+    {"field": {"token": "name"}, "order": "asc"},
     {"field": "pane_order", "order": "asc"},
 ]
 
@@ -112,29 +118,57 @@ def read_order():
     return []
 
 
-def manual_sequence(ranked_ids, order):
-    """Pure. Saved `order` first (only ids in ranked_ids), then the rest
-    (new agents) at the end in ranked (default rank) order."""
-    live = set(ranked_ids)
-    seq = []
-    seen = set()
+def space_sequence(panes, order):
+    """Pure. panes: iterable of (pane_id, space_key, repo, name).
+
+    Spaces ascending by space_key (live sidebar order). Inside each space: ids
+    present in `order` first (in that relative order), then the rest (new
+    panes) by (repo, name, pane_id). Ids in `order` that are not live are
+    ignored. Returns the full list of pane_ids.
+    """
+    pos = {}
     for p in order:
-        if p in live and p not in seen:
-            seen.add(p)
-            seq.append(p)
-    seq += [p for p in ranked_ids if p not in seen]
+        if p not in pos:
+            pos[p] = len(pos)
+    spaces = {}
+    for pid, key, repo, name in panes:
+        spaces.setdefault(key, []).append((pid, (repo or "").lower(), (name or "").lower()))
+    seq = []
+    for key in sorted(spaces):
+        members = spaces[key]
+        manual = sorted((m for m in members if m[0] in pos), key=lambda m: pos[m[0]])
+        rest = sorted((m for m in members if m[0] not in pos),
+                      key=lambda m: (m[1], m[2], m[0]))
+        seq += [m[0] for m in manual + rest]
     return seq
 
 
-def move_item(items, idx, delta):
-    """Pure. Move items[idx] by delta (+/-1) -> (new_list, new_idx).
-    Out of range: unchanged."""
+def order_indices(seq, space_of):
+    """Pure. pane_id -> index inside its own space, following `seq`."""
+    counters = {}
+    out = {}
+    for pid in seq:
+        k = space_of(pid)
+        out[pid] = counters.get(k, 0)
+        counters[k] = out[pid] + 1
+    return out
+
+
+def move_in_space(items, idx, delta, space_of):
+    """Pure. Move items[idx] by delta (+/-1) but only inside its own space.
+
+    items: list of pane_ids (or any key); space_of(item) -> space key.
+    -> (new_list, new_idx, moved). At a space boundary / out of range:
+    unchanged, moved=False.
+    """
     j = idx + delta
     if not (0 <= idx < len(items)) or not (0 <= j < len(items)):
-        return list(items), idx
+        return list(items), idx, False
+    if space_of(items[idx]) != space_of(items[j]):
+        return list(items), idx, False
     out = list(items)
     out[idx], out[j] = out[j], out[idx]
-    return out, j
+    return out, j, True
 
 
 def write_mode(mode):
@@ -269,11 +303,12 @@ def agent_name(a, ctx):
     )
 
 
-def publish_tokens(agents=None):
+def publish_tokens(agents=None, with_order=False):
     """Write `repo`, `name` and `order` tokens on every agent pane (for SORT).
 
-    `order` is a 4-digit index when a manual order exists (saved panes by their
-    position, new panes after them in default rank), else null (cleared).
+    `order` (only with_order=True and a saved manual order) is the 4-digit
+    position of the pane inside its space (saved panes first, new panes after
+    them in default rank); otherwise null (cleared).
 
     The old `title` and `space` tokens are cleared (null) so stale ones never linger.
     Best effort: a failing/dead pane is skipped, never raised. Returns the
@@ -284,21 +319,21 @@ def publish_tokens(agents=None):
     if not agents:
         return 0
     ctx = name_context()
-    manual = read_order()
+    manual = read_order() if with_order else []
     order_idx = {}
     if manual:
         ws_idx = workspace_index()
-        keyed = []
+        space = {}
+        panes = []
         for a in agents:
             pid = a.get("pane_id")
             if not pid:
                 continue
             cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
-            keyed.append((ws_idx.get(a.get("workspace_id"), len(ws_idx)),
-                          os.path.basename(cwd).lower(),
-                          agent_name(a, ctx).lower(), pid))
-        ranked = [k[3] for k in sorted(keyed)]
-        order_idx = {p: i for i, p in enumerate(manual_sequence(ranked, manual))}
+            key = ws_idx.get(a.get("workspace_id"), len(ws_idx))
+            space[pid] = key
+            panes.append((pid, key, os.path.basename(cwd), agent_name(a, ctx)))
+        order_idx = order_indices(space_sequence(panes, manual), space.__getitem__)
     n = 0
     for a in agents:
         pane_id = a.get("pane_id")
@@ -366,7 +401,7 @@ def prune_order():
 
 
 def apply_mode(mode, excluded=None):
-    manual = bool(read_order())
+    manual = mode == "picked" and bool(read_order())
     if mode == "picked":
         if excluded is None:
             excluded = read_excluded()
@@ -379,7 +414,7 @@ def apply_mode(mode, excluded=None):
         else:
             flt = {"op": "not", "filter": {"op": "in", "field": "pane_id", "values": list(excluded)}}
     if mode != "all":
-        publish_tokens()
+        publish_tokens(with_order=manual)
     if mode == "all":
         resp = send({"id": "avf_clear", "method": "agent.view.clear", "params": {"source": SOURCE}})
     else:

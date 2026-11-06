@@ -110,48 +110,50 @@ the sidebar. Each agent takes two lines:
   suffix when it is not already part of the name.
 
 Keys: `up/down` or `j/k` move, `Shift+up/down` (or `K`/`J`) reorder the item
-under the cursor, `r` reset to space order, `space` toggle, `/` search (Enter keeps the
+under the cursor, `r` reset order, `space` toggle, `/` search (Enter keeps the
 filter, Esc clears), `a` check all (visible rows), `n` uncheck all (visible
 rows), `Enter` save + switch to `picked` + close, `q`/`Esc` cancel without
-saving. Initial order: the saved manual order (see "Manual order") if any, else space position in the sidebar (`number` from `workspace.list`, which
-follows manual reordering), then repo A-Z, then name A-Z. Fixed at open; rows do
+saving. Initial order: spaces in live sidebar order (`number` from `workspace.list`); inside each space the saved manual order (see "Manual order") if any, then the rest by repo A-Z, then name A-Z. Fixed at open; rows do
 not jump while toggling (no "checked first", no status rank).
 
 ### Manual order
 
-Build your own agent order in the picker and the sidebar follows it.
+Build your own agent order **inside each space** in the picker. It only applies
+to the `picked` view; `active` and `space` always use the default sort
+(`[workspace_order, repo, name, pane_order]`) and `all` is native.
 
+- Spaces always follow the live sidebar order (`workspace_order`), also in
+  `picked`. Moving a space in the sidebar moves its agents with it; the manual
+  order only decides the order within a space.
 - `Shift+up` / `Shift+down` move the item under the cursor one position and the
   cursor follows it. Fallback without shift support: `K` (up) / `J` (down).
   Raw `ESC [ 1 ; 2 A/B` is decoded too when curses does not map it.
+- Moves stay inside the item's own space: at the space boundary nothing moves
+  and the footer shows a short notice.
 - Disabled while a search query is active (footer shows a short notice).
-- The header shows `order: manual` or `order: follows spaces`.
-- `r` goes back to following the space order (default rank); it clears `order`
-  when you press Enter. Moving again re-enables manual order.
+- The header shows `order: manual (per space)` or `order: follows spaces`.
+- `r` goes back to the default order (repo, name); it clears `order` when you
+  press Enter. Moving again re-enables manual order.
 - `Enter` saves `excluded` as before and also `order` = the full list of
   pane_ids as displayed (when manual is active), or `order: []` after `r`.
   `q`/`Esc` saves nothing.
-- Stored in state.json as `order` (list of pane_id). Empty or missing (old
-  state) = no manual order, previous behavior. `excluded` and `order` are
-  independent and can coexist.
-- Sidebar: with a non-empty `order`, `active`/`space`/`picked` sort by
-  `[{token: order}, pane_order]`; `publish_tokens()` writes an `order` token (4
-  digits, zero padded) on every agent pane: saved panes get their index, panes
-  not in `order` (new agents) get the following indexes in default rank
-  (space, repo, name), so **a new agent goes to the end**. Without manual order
-  the token is published as `null`. `all` is untouched (native order).
+- Stored in state.json as `order` (flat list of pane_id; the position inside
+  each space is derived from it, so older states keep working). Empty or
+  missing = no manual order. `excluded` and `order` are independent.
+- Sidebar (`picked` with a non-empty `order`): sort is
+  `[workspace_order, {token: order}, {token: repo}, {token: name}, pane_order]`
+  (all asc). `publish_tokens()` writes an `order` token (4 digits) on every
+  agent pane = its position inside its space: saved panes first, then panes not
+  in `order` (new agents) by repo/name, so **a new agent goes to the end of its
+  space**. In other modes the token is published as `null`.
 - New agents are not written into `order` automatically; they stay at the end
-  (via token) until you save the picker again, which persists them. Trade-off:
-  not persisting keeps `order` equal to what you chose, and the position of new
-  agents still follows default rank among themselves.
+  of their space until you save the picker again, which persists them.
 - `sync` prunes pane_ids of dead panes from `order` (like `excluded`).
 - `picked` with nothing excluded and a manual order keeps a match-all view
   (instead of clearing like `all`) so the manual sort applies.
 
-Limitations: while manual order is on, moving a space does not move its agents
-(the order is per pane, not per space); press `r` in the picker to follow
-spaces again. Shift+up/down must reach the popup process; Herdr itself only
-binds shift+left/right (tabs) in this setup.
+Shift+up/down must reach the popup process; Herdr itself only binds
+shift+left/right (tabs) in this setup.
 
 ### Exclusion model
 
