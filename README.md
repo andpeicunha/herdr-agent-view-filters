@@ -113,7 +113,7 @@ Keys: `up/down` or `j/k` move, `Shift+up/down` (or `K`/`J`) reorder the item
 under the cursor, `r` reset order, `space` toggle, `/` search (Enter keeps the
 filter, Esc clears), `a` check all (visible rows), `n` uncheck all (visible
 rows), `Enter` save + switch to `picked` + close, `q`/`Esc` cancel without
-saving. Initial order: spaces in live sidebar order (`number` from `workspace.list`); inside each space the saved manual order (see "Manual order") if any, then the rest by repo A-Z, then name A-Z. Fixed at open; rows do
+saving. Initial order: spaces in the saved space order (new spaces last; default: live sidebar order, `number` from `workspace.list`); inside each space the saved manual order (see "Manual order") if any, then the rest by repo A-Z, then name A-Z. Fixed at open; rows do
 not jump while toggling (no "checked first", no status rank).
 
 ### Manual order
@@ -122,27 +122,34 @@ Build your own agent order **inside each space** in the picker. It only applies
 to the `picked` view; `active` and `space` always use the default sort
 (`[workspace_order, repo, name, pane_order]`) and `all` is native.
 
-- Spaces always follow the live sidebar order (`workspace_order`), also in
-  `picked`. Moving a space in the sidebar moves its agents with it; the manual
-  order only decides the order within a space.
+- Spaces follow the live sidebar order (`workspace_order`) until you move one
+  in the picker. A moved space order applies only to the `picked` view; the real
+  sidebar and the `active`/`space`/`all` views are untouched. A space not in the
+  saved space order (new) goes last; a saved space that no longer exists is
+  ignored.
 - `Shift+up` / `Shift+down` move the item under the cursor one position and the
   cursor follows it. Fallback without shift support: `K` (up) / `J` (down).
   Raw `ESC [ 1 ; 2 A/B` is decoded too when curses does not map it.
-- Moves stay inside the item's own space: at the space boundary nothing moves
-  and the footer shows a short notice.
+- Inside a space the item swaps with its neighbour. At the space boundary the
+  WHOLE space (all its agents, internal order kept) jumps over the neighbouring
+  space, e.g. `[pip-ops x5][herdr-plugin x1]` + Shift+up on the herdr-plugin
+  agent -> `[herdr-plugin][pip-ops x5]`; the cursor follows the moved item. At
+  the absolute top/bottom nothing moves (short footer notice).
 - Disabled while a search query is active (footer shows a short notice).
-- The header shows `order: manual (per space)` or `order: follows spaces`.
-- `r` goes back to the default order (repo, name); it clears `order` when you
+- The header shows `order: manual` or `order: default`.
+- `r` goes back to the default order (sidebar spaces; repo, name inside); it clears `order` and `space_order` when you
   press Enter. Moving again re-enables manual order.
-- `Enter` saves `excluded` as before and also `order` = the full list of
+- `Enter` saves `excluded` as before and also `space_order` (workspace_ids as displayed, only when a space was moved) and `order` = the full list of
   pane_ids as displayed (when manual is active), or `order: []` after `r`.
   `q`/`Esc` saves nothing.
-- Stored in state.json as `order` (flat list of pane_id; the position inside
+- Stored in state.json as `space_order` (list of workspace_id; missing in old
+  states = default sidebar order) and `order` (flat list of pane_id; the position inside
   each space is derived from it, so older states keep working). Empty or
   missing = no manual order. `excluded` and `order` are independent.
 - Sidebar (`picked` with a non-empty `order`): sort is
-  `[workspace_order, {token: order}, {token: repo}, {token: name}, pane_order]`
-  (all asc). `publish_tokens()` writes an `order` token (4 digits) on every
+  `[{token: space}, {token: order}, {token: repo}, {token: name}, pane_order]`
+  (all asc). `publish_tokens()` writes a `space` token (4-digit space rank) and
+  an `order` token (4 digits) on every
   agent pane = its position inside its space: saved panes first, then panes not
   in `order` (new agents) by repo/name, so **a new agent goes to the end of its
   space**. In other modes the token is published as `null`.
@@ -157,7 +164,7 @@ shift+left/right (tabs) in this setup.
 
 ### Exclusion model
 
-`$HERDR_PLUGIN_STATE_DIR/state.json` holds `{"mode": ..., "excluded": [pane_id,...], "order": [pane_id,...]}`.
+`$HERDR_PLUGIN_STATE_DIR/state.json` holds `{"mode": ..., "excluded": [pane_id,...], "order": [pane_id,...], "space_order": [workspace_id,...]}`.
 The `picked` view is `not(pane_id in excluded)`, so a **new agent shows up
 automatically**; only unticked ones disappear. With an empty `excluded` the
 view is cleared (same as `all`). On every `sync` (workspace focus) and on

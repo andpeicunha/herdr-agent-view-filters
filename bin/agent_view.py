@@ -10,8 +10,9 @@ Modes:
 Filtered modes use a stable sort (native workspace_order = sidebar space order,
 repo A-Z, name A-Z, layout), based on per-pane tokens that publish_tokens()
 refreshes on every sync / mode apply. Only `picked` honors the manual order
-saved by the picker, and only INSIDE each space (spaces always follow the live
-sidebar order). "all" clears the view and keeps Herdr's native priority order.
+saved by the picker: agent order inside each space and, for this view only, the
+order of the spaces themselves (the real sidebar is untouched). Spaces missing
+from the saved space order go last; unknown saved spaces are ignored. "all" clears the view and keeps Herdr's native priority order.
 
 State (which mode is "on") persists in $HERDR_PLUGIN_STATE_DIR/state.json so
 the workspace.focused hook can re-assert it after space switches / restarts.
@@ -47,12 +48,12 @@ SORT = [
     {"field": "pane_order", "order": "asc"},
 ]
 
-# Manual order (picker, `picked` mode only): `order` token is the zero-padded
-# position of the pane INSIDE its space, published by publish_tokens(). Spaces
-# always come first (live sidebar order); repo/name break ties for panes
-# without a manual position.
+# Manual order (picker, `picked` mode only): `space` token is the zero-padded
+# rank of the pane's space (saved space order, else live sidebar order) and
+# `order` the position of the pane INSIDE its space, both published by
+# publish_tokens(). repo/name break ties for panes without a manual position.
 SORT_MANUAL = [
-    {"field": "workspace_order", "order": "asc"},
+    {"field": {"token": "space"}, "order": "asc"},
     {"field": {"token": "order"}, "order": "asc"},
     {"field": {"token": "repo"}, "order": "asc"},
     {"field": {"token": "name"}, "order": "asc"},
@@ -80,15 +81,17 @@ def read_state():
     return {}
 
 
-def write_state(mode, excluded, order=None):
-    """Atomic write. order=None keeps the stored manual order; [] clears it."""
+def write_state(mode, excluded, order=None, space_order=None):
+    """Atomic write. order/space_order=None keep the stored value; [] clears it."""
     if order is None:
         order = read_order()
+    if space_order is None:
+        space_order = read_space_order()
     path = state_path()
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump({"mode": mode, "excluded": sorted(set(excluded)),
-                   "order": list(order)}, f)
+                   "order": list(order), "space_order": list(space_order)}, f)
     os.replace(tmp, path)
 
 
@@ -106,7 +109,15 @@ def read_excluded():
 
 def read_order():
     """Manual order: list of pane_ids ([] = follow space order). Old state -> []."""
-    od = read_state().get("order")
+    return _str_list(read_state().get("order"))
+
+
+def read_space_order():
+    """Manual space order (picked view): list of workspace_ids. Old state -> []."""
+    return _str_list(read_state().get("space_order"))
+
+
+def _str_list(od):
     if isinstance(od, list):
         seen = set()
         out = []
@@ -118,10 +129,13 @@ def read_order():
     return []
 
 
-def space_sequence(panes, order):
+def space_sequence(panes, order, space_order=None, space_ids=None):
     """Pure. panes: iterable of (pane_id, space_key, repo, name).
 
-    Spaces ascending by space_key (live sidebar order). Inside each space: ids
+    Spaces ascending by space_key (live sidebar order), unless `space_order`
+    (list of space ids; space_ids maps space_key -> id, default key itself)
+    is given: listed spaces first in that order, unlisted ones after them by
+    space_key, unknown listed ids ignored. Inside each space: ids
     present in `order` first (in that relative order), then the rest (new
     panes) by (repo, name, pane_id). Ids in `order` that are not live are
     ignored. Returns the full list of pane_ids.
@@ -134,7 +148,17 @@ def space_sequence(panes, order):
     for pid, key, repo, name in panes:
         spaces.setdefault(key, []).append((pid, (repo or "").lower(), (name or "").lower()))
     seq = []
-    for key in sorted(spaces):
+    sid = space_ids or {}
+    rank = {}
+    for x in space_order or []:
+        if x not in rank:
+            rank[x] = len(rank)
+
+    def skey(k):
+        r = rank.get(sid.get(k, k))
+        return (0, r, 0) if r is not None else (1, 0, k)
+
+    for key in sorted(spaces, key=skey):
         members = spaces[key]
         manual = sorted((m for m in members if m[0] in pos), key=lambda m: pos[m[0]])
         rest = sorted((m for m in members if m[0] not in pos),
@@ -169,6 +193,46 @@ def move_in_space(items, idx, delta, space_of):
     out = list(items)
     out[idx], out[j] = out[j], out[idx]
     return out, j, True
+
+
+def move_unit(items, idx, delta, space_of):
+    """Pure. Move items[idx] by delta (+/-1).
+
+    Inside its space: swap with the neighbour. At the space edge: the whole
+    space block (contiguous run, internal order kept) jumps over the
+    neighbouring space block. items is a list of keys grouped by space.
+    -> (new_list, new_idx, kind); kind is "item", "space" or "edge"
+    (nothing moved: absolute top/bottom or bad idx). new_idx follows the item.
+    """
+    n = len(items)
+    if delta not in (-1, 1) or not 0 <= idx < n:
+        return list(items), idx, "edge"
+    j = idx + delta
+    if not 0 <= j < n:
+        return list(items), idx, "edge"
+    if space_of(items[idx]) == space_of(items[j]):
+        out = list(items)
+        out[idx], out[j] = out[j], out[idx]
+        return out, j, "item"
+    key = space_of(items[idx])
+    s = idx
+    while s > 0 and space_of(items[s - 1]) == key:
+        s -= 1
+    e = idx
+    while e + 1 < n and space_of(items[e + 1]) == key:
+        e += 1
+    nkey = space_of(items[j])
+    if delta < 0:
+        ns = j
+        while ns > 0 and space_of(items[ns - 1]) == nkey:
+            ns -= 1
+        out = items[:ns] + items[s:e + 1] + items[ns:s] + items[e + 1:]
+        return out, idx - (s - ns), "space"
+    ne = j
+    while ne + 1 < n and space_of(items[ne + 1]) == nkey:
+        ne += 1
+    out = items[:s] + items[e + 1:ne + 1] + items[s:e + 1] + items[ne + 1:]
+    return out, idx + (ne - e), "space"
 
 
 def write_mode(mode):
@@ -310,7 +374,8 @@ def publish_tokens(agents=None, with_order=False):
     position of the pane inside its space (saved panes first, new panes after
     them in default rank); otherwise null (cleared).
 
-    The old `title` and `space` tokens are cleared (null) so stale ones never linger.
+    `space` is the 4-digit rank of the pane's space (saved space order first).
+    The old `title` token is cleared (null) so stale ones never linger.
     Best effort: a failing/dead pane is skipped, never raised. Returns the
     number of panes written.
     """
@@ -320,10 +385,13 @@ def publish_tokens(agents=None, with_order=False):
         return 0
     ctx = name_context()
     manual = read_order() if with_order else []
+    sorder = read_space_order() if with_order else []
     order_idx = {}
-    if manual:
+    space_rank = {}
+    if manual or sorder:
         ws_idx = workspace_index()
         space = {}
+        space_ids = {}
         panes = []
         for a in agents:
             pid = a.get("pane_id")
@@ -332,8 +400,13 @@ def publish_tokens(agents=None, with_order=False):
             cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
             key = ws_idx.get(a.get("workspace_id"), len(ws_idx))
             space[pid] = key
+            space_ids[key] = a.get("workspace_id")
             panes.append((pid, key, os.path.basename(cwd), agent_name(a, ctx)))
-        order_idx = order_indices(space_sequence(panes, manual), space.__getitem__)
+        seq = space_sequence(panes, manual, sorder, space_ids)
+        order_idx = order_indices(seq, space.__getitem__)
+        for pid in seq:
+            space_rank.setdefault(space[pid], len(space_rank))
+        space_rank = {pid: space_rank[space[pid]] for pid in seq}
     n = 0
     for a in agents:
         pane_id = a.get("pane_id")
@@ -342,7 +415,7 @@ def publish_tokens(agents=None, with_order=False):
         cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
         repo = os.path.basename(cwd)
         tokens = {
-            "space": None,
+            "space": f"{space_rank[pane_id]:04d}" if pane_id in space_rank else None,
             "repo": _token_value(repo),
             "name": _token_value(agent_name(a, ctx)),
             "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
@@ -401,7 +474,7 @@ def prune_order():
 
 
 def apply_mode(mode, excluded=None):
-    manual = mode == "picked" and bool(read_order())
+    manual = mode == "picked" and bool(read_order() or read_space_order())
     if mode == "picked":
         if excluded is None:
             excluded = read_excluded()

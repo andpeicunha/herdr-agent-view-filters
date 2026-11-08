@@ -1,6 +1,6 @@
 id = "andpeicunha.agent-view-filters"
 name = "agent-view-filters"
-version = "0.7.0"
+version = "0.8.0"
 min_herdr_version = "0.9.5"
 platforms = ["macos", "linux"]
 description = "Cycle the Agents sidebar between active (working/blocked), current-space, picked (exclusion list from a popup) and all agents."

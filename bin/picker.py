@@ -4,10 +4,12 @@
 Checked = visible (not excluded). Enter saves `excluded` to state.json and
 applies the `picked` view; q/Esc cancels without saving.
 
-Manual order (picked view only): spaces always follow the live sidebar order;
-Shift+Up/Down (or K/J) move the item under the cursor only inside its own space,
-`r` goes back to the default order. Enter also saves `order` (the displayed
-list) when a manual order is active, or clears it after `r`.
+Manual order (picked view only; the real sidebar is untouched): Shift+Up/Down
+(or K/J) swap the item under the cursor with its neighbour inside its space; at
+the space edge the WHOLE space jumps over the neighbouring space (internal
+order kept). At the absolute top/bottom nothing moves. `r` resets agent and
+space order. Enter also saves `order` (displayed agents) and `space_order`
+(displayed spaces) when a manual order is active, or clears them after `r`.
 """
 import curses
 import os
@@ -48,19 +50,30 @@ def build_rows():
             "status": a.get("agent_status") or "unknown",
             "ws": ws.get(a.get("workspace_id"), a.get("workspace_id", "")),
             "agent": a.get("agent") or "",
+            "ws_id": a.get("workspace_id") or "",
             "ws_idx": ws_idx.get(a.get("workspace_id"), len(ws_idx)),
             "checked": a.get("pane_id") not in excluded,
         })
-    return rows, excluded, av.read_order()
+    return rows, excluded, av.read_order(), av.read_space_order()
 
 
-def resort(rows, order=None):
-    """Spaces in live sidebar order; inside each, saved order first, then new
-    agents by repo/name."""
+def resort(rows, order=None, space_order=None):
+    """Spaces by saved space order (new ones last, else live sidebar order);
+    inside each, saved order first, then new agents by repo/name."""
     by_id = {r["pane_id"]: r for r in rows}
     seq = av.space_sequence(
-        [(r["pane_id"], r["ws_idx"], r["repo"], r["name"]) for r in rows], order or [])
+        [(r["pane_id"], r["ws_idx"], r["repo"], r["name"]) for r in rows],
+        order or [], space_order or [],
+        {r["ws_idx"]: r["ws_id"] for r in rows})
     rows[:] = [by_id[p] for p in seq]
+
+
+def displayed_space_order(rows):
+    out = []
+    for r in rows:
+        if r["ws_id"] not in out:
+            out.append(r["ws_id"])
+    return out
 
 
 SHIFT_UP = getattr(curses, "KEY_SR", 337)
@@ -135,8 +148,9 @@ def put(stdscr, y, x, text, attr, w):
     return x + len(text)
 
 
-def run(stdscr, rows, order, result):
-    """Returns True to save. result["manual"] tells whether to store `order`."""
+def run(stdscr, rows, order, space_order, result):
+    """Returns True to save. result["manual"] / result["space_manual"] tell
+    whether to store `order` / `space_order`."""
     try:
         curses.curs_set(0)  # terminais como vt100 não suportam
     except curses.error:
@@ -148,9 +162,10 @@ def run(stdscr, rows, order, result):
     cur = 0
     top = 0
     # Sort once at start; do not reshuffle while toggling (avoids jumping rows).
-    manual = bool(order)
+    manual = bool(order) or bool(space_order)
+    space_manual = bool(space_order)
     notice = ""
-    resort(rows, order)
+    resort(rows, order, space_order)
 
     def visible():
         q = query.lower()
@@ -173,7 +188,7 @@ def run(stdscr, rows, order, result):
         stdscr.erase()
         n_on = sum(1 for r in rows if r["checked"])
         head = f" agents shown: {n_on}/{len(rows)}   order: " + (
-            "manual (per space)" if manual else "follows spaces")
+            "manual" if manual else "default")
         if query or searching:
             head += f"   /{query}{'_' if searching else ''}"
         try:
@@ -224,8 +239,8 @@ def run(stdscr, rows, order, result):
                 x = put(stdscr, y + 1, 0, f"      {shown}", attr2, w)
                 if r["name"] and r["title"] and r["title"].lower() not in r["name"].lower():
                     put(stdscr, y + 1, x, f"  ·  {r['title']}", attr2, w)
-            foot = (" j/k nav  S-up/dn|J/K reorder  space toggle  / find  a all  n none"
-                    "  r reset order  enter save  q cancel")
+            foot = (" j/k nav  S-up/dn|J/K move (edge: space)  space toggle  / find  a all  n none"
+                    "  r reset  enter save  q cancel")
             if notice:
                 stdscr.addnstr(h - 1, 0, " " + notice, w - 1, curses.A_BOLD)
             else:
@@ -278,16 +293,20 @@ def run(stdscr, rows, order, result):
                 notice = "clear search (Esc) to reorder"
             elif vis:
                 by_id = {r["pane_id"]: r for r in rows}
-                ids, cur, moved = av.move_in_space(
+                ids, cur, kind = av.move_unit(
                     [r["pane_id"] for r in rows], cur, -1 if k in MOVE_UP else 1,
                     lambda p: by_id[p]["ws_idx"])
-                if moved:
+                if kind == "edge":
+                    notice = "already at the top" if k in MOVE_UP else "already at the bottom"
+                else:
                     rows[:] = [by_id[p] for p in ids]
                     manual = True
-                else:
-                    notice = "space boundary: can only reorder within a space"
+                    if kind == "space":
+                        space_manual = True
+                        notice = "space moved"
         elif k == ord("r"):
             manual = False
+            space_manual = False
             resort(rows)
             cur = 0
             top = 0
@@ -301,17 +320,18 @@ def run(stdscr, rows, order, result):
                 r["checked"] = False
         elif k in (10, 13, curses.KEY_ENTER):
             result["manual"] = manual
+            result["space_manual"] = space_manual
             return True
 
 
 def main():
-    rows, old_excluded, order = build_rows()
+    rows, old_excluded, order, space_order = build_rows()
     if not rows:
         print("no agents")
         return
-    result = {"manual": False}
+    result = {"manual": False, "space_manual": False}
     os.environ.setdefault("ESCDELAY", "25")  # lone Esc cancels fast (keypad waits 1s)
-    save = curses.wrapper(run, rows, order, result)
+    save = curses.wrapper(run, rows, order, space_order, result)
     if not save:
         return
     live = {r["pane_id"] for r in rows}
@@ -319,7 +339,8 @@ def main():
     excluded = [r["pane_id"] for r in rows if not r["checked"]]
     excluded += [p for p in old_excluded if p not in live]
     new_order = [r["pane_id"] for r in rows] if result["manual"] else []
-    av.write_state("picked", excluded, new_order)
+    new_space_order = displayed_space_order(rows) if result["space_manual"] else []
+    av.write_state("picked", excluded, new_order, new_space_order)
     av.apply_mode("picked", excluded)
 
 
