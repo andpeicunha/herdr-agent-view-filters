@@ -22,6 +22,11 @@ import os
 import socket
 import sys
 
+try:
+    import tomllib
+except ImportError:  # python < 3.11
+    tomllib = None
+
 SOURCE = "plugin:andpeicunha.agent-view-filters"
 MODES = ["active", "space", "picked", "all"]
 
@@ -81,17 +86,23 @@ def read_state():
     return {}
 
 
-def write_state(mode, excluded, order=None, space_order=None):
-    """Atomic write. order/space_order=None keep the stored value; [] clears it."""
+def write_state(mode, excluded, order=None, space_order=None, seen=None):
+    """Atomic write. order/space_order/seen=None keep the stored value; [] clears it."""
+    st = read_state()
+    if seen is None:
+        seen = st.get("seen")
     if order is None:
         order = read_order()
     if space_order is None:
         space_order = read_space_order()
     path = state_path()
     tmp = path + ".tmp"
+    data = {"mode": mode, "excluded": sorted(set(excluded)),
+            "order": list(order), "space_order": list(space_order)}
+    if isinstance(seen, list):  # absent key = "never initialised" (see apply_new_policy)
+        data["seen"] = sorted(set(x for x in seen if isinstance(x, str)))
     with open(tmp, "w") as f:
-        json.dump({"mode": mode, "excluded": sorted(set(excluded)),
-                   "order": list(order), "space_order": list(space_order)}, f)
+        json.dump(data, f)
     os.replace(tmp, path)
 
 
@@ -115,6 +126,59 @@ def read_order():
 def read_space_order():
     """Manual space order (picked view): list of workspace_ids. Old state -> []."""
     return _str_list(read_state().get("space_order"))
+
+
+NEW_POLICIES = ("exclude", "include")
+
+
+def config_path():
+    d = os.environ.get("HERDR_PLUGIN_CONFIG_DIR") or os.path.expanduser(
+        "~/.config/herdr/plugins/config/andpeicunha.agent-view-filters")
+    return os.path.join(d, "config.toml")
+
+
+def read_picked_new():
+    """Config `picked_new`: "exclude" (default) | "include". Invalid/missing -> exclude."""
+    if tomllib is None:
+        return "exclude"
+    try:
+        with open(config_path(), "rb") as f:
+            v = tomllib.load(f).get("picked_new")
+    except (OSError, ValueError):
+        return "exclude"
+    return v if v in NEW_POLICIES else "exclude"
+
+
+def apply_new_policy(live, seen, excluded, policy):
+    """Pure. Returns (seen, excluded) after handling never-seen agents.
+
+    seen=None means state predates this feature: mark all live as seen WITHOUT
+    excluding (keeps today's view). Otherwise, with policy "exclude", live ids
+    not in seen join excluded. Both lists are pruned to live ids.
+    """
+    live = set(live)
+    kept_ex = [p for p in excluded if p in live]
+    if seen is None:
+        return sorted(live), kept_ex
+    new = live - set(seen)
+    if policy == "exclude":
+        kept_ex = sorted(set(kept_ex) | new)
+    return sorted(live), kept_ex
+
+
+def sync_new_agents():
+    """Persist apply_new_policy over the live agents. Skips on listing failure."""
+    agents = list_agents()
+    if agents is None:
+        return
+    st = read_state()
+    seen = st.get("seen")
+    seen = _str_list(seen) if isinstance(seen, list) else None
+    live = [a.get("pane_id") for a in agents if isinstance(a.get("pane_id"), str)]
+    ex = read_excluded()
+    new_seen, new_ex = apply_new_policy(live, seen, ex, read_picked_new())
+    if new_seen != sorted(set(seen or [])) or seen is None or sorted(set(new_ex)) != sorted(set(ex)):
+        write_state(read_mode(), new_ex, seen=new_seen)
 
 
 def _str_list(od):
@@ -511,6 +575,7 @@ def main():
 
     if action == "sync":
         mode = read_mode()
+        sync_new_agents()
         excluded = prune_excluded()
         prune_order()
         apply_mode(mode, excluded)

@@ -165,11 +165,29 @@ shift+left/right (tabs) in this setup.
 ### Exclusion model
 
 `$HERDR_PLUGIN_STATE_DIR/state.json` holds `{"mode": ..., "excluded": [pane_id,...], "order": [pane_id,...], "space_order": [workspace_id,...]}`.
-The `picked` view is `not(pane_id in excluded)`, so a **new agent shows up
-automatically**; only unticked ones disappear. With an empty `excluded` the
+The `picked` view is `not(pane_id in excluded)`. State also keeps `seen`
+(pane_ids already known); see "New agents" below. With an empty `excluded` the
 view is cleared (same as `all`). On every `sync` (workspace focus) and on
 `picked`/`cycle` into picked, ids of panes that no longer exist are pruned.
 An old state.json without `excluded` or `order` is read as empty.
+
+### New agents (`picked_new`)
+
+Config `config.toml` in `$HERDR_PLUGIN_CONFIG_DIR` (fallback
+`~/.config/herdr/plugins/config/andpeicunha.agent-view-filters/config.toml`):
+
+```toml
+picked_new = "exclude"   # default; or "include"
+```
+
+- `exclude`: an agent never seen before is added to `excluded` on `sync`
+  (pane.created, pane.agent_detected, ...), so it does NOT appear in `picked`.
+  Tick it in the picker to show it.
+- `include`: new agents show up automatically (old behaviour).
+- On the first sync after upgrading to 0.9.0 all current agents are marked
+  seen without being excluded, so the current view is unchanged.
+- `seen` and `excluded` are pruned of dead panes on every `sync`.
+- Needs Python 3.11+ (`tomllib`); otherwise the default (`exclude`) is used.
 
 ## Why not a time window (e.g. "active in the last 12h")?
 
