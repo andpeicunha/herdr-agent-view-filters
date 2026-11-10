@@ -1,6 +1,6 @@
 id = "andpeicunha.agent-view-filters"
 name = "agent-view-filters"
-version = "0.9.0"
+version = "0.10.0"
 min_herdr_version = "0.9.5"
 platforms = ["macos", "linux"]
 description = "Cycle the Agents sidebar between active (working/blocked), current-space, picked (exclusion list from a popup) and all agents."
@@ -65,4 +65,24 @@ command = ["bash", "run.sh", "sync"]
 
 [[events]]
 on = "tab.renamed"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "workspace.moved"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "workspace.reordered"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "tab.moved"
+command = ["bash", "run.sh", "sync"]
+
+[[events]]
+on = "pane.moved"
 command = ["bash", "run.sh", "sync"]
