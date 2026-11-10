@@ -242,7 +242,9 @@ def draw_row(stdscr, y, r, rev, space_on, colors, w):
     if r["kind"] == "item":
         put(stdscr, y, 0, "           " + r["label"], rev | curses.A_DIM, w)
         return
-    sattr = status_attr(r["status"], colors) | rev
+    # Com cor, o glifo não herda o reverso da linha selecionada (senão perde a cor);
+    # sem cor, segue o realce da linha.
+    sattr = status_attr(r["status"], colors) | (0 if colors else rev)
     if r["kind"] == "root":
         on = r["checked"] and space_on  # root under an unchecked space is derived-off
         mark = "[x]" if on else "[ ]"
