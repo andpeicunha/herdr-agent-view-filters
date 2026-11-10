@@ -96,6 +96,12 @@ Limitations:
   re-applying a mode). A pane rename or a changed terminal title is picked up at
   the next sync (no `pane.*renamed` event is used). There is deliberately no hook
   on `pane.agent_status_changed` (it fires constantly).
+- `pane.closed` runs `sync-closed`: Herdr fires the event while `pane.list` /
+  `agent.list` may still return the closing pane, so the hook reads its id from
+  `HERDR_PLUGIN_EVENT_JSON` (`data.pane_id`; `sync --closed <pane_id>` does the
+  same by hand) and drops it from that sync's snapshot, then schedules one
+  detached re-sync after ~0.4s (`delayed.lock` flock coalesces bursts) so the
+  root loses its stale `├` sub row.
 - Panes without tokens (not yet synced) sort per Herdr's missing-value rule,
   until the next sync.
 
