@@ -69,7 +69,7 @@ command = ["bash", "run.sh", "sync"]
 
 [[events]]
 on = "pane.closed"
-command = ["bash", "run.sh", "sync"]
+command = ["bash", "run.sh", "sync-closed"]
 
 [[events]]
 on = "workspace.moved"

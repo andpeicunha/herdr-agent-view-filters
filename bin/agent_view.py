@@ -52,6 +52,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -1133,17 +1134,89 @@ def _apply_mode(mode, excluded, snap):
         return None
 
 
+def closed_pane_arg(args):
+    """Pane id after `--closed`, or None."""
+    if "--closed" in args:
+        i = args.index("--closed")
+        if i + 1 < len(args) and args[i + 1]:
+            return args[i + 1]
+    return None
+
+
+def closed_pane_from_env():
+    """pane_id of a pane.closed hook (HERDR_PLUGIN_EVENT_JSON), or None."""
+    if os.environ.get("HERDR_PLUGIN_EVENT") != "pane.closed":
+        return None
+    try:
+        data = json.loads(os.environ.get("HERDR_PLUGIN_EVENT_JSON") or "")
+        pid = data["data"]["pane_id"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return pid if isinstance(pid, str) and pid else None
+
+
+def drop_closed(snap, closed):
+    """Remove a pane that is closing from the snapshot: Herdr emits pane.closed
+    before pane.list / agent.list stop returning it."""
+    if not closed:
+        return snap
+    if snap.get("agents") is not None:
+        snap["agents"] = [a for a in snap["agents"] if a.get("pane_id") != closed]
+    snap["panes"] = [p for p in snap["panes"] if p.get("pane_id") != closed]
+    return snap
+
+
+def run_sync(closed=None):
+    with state_lock():
+        mode = read_mode()
+        snap = drop_closed(take_snapshot(), closed)
+        sync_new_agents(snap)
+        excluded = prune_excluded(snap)
+        apply_mode(mode, excluded, snap)
+    print(f"agent-view-filters: synced -> {mode}")
+
+
+DELAYED_SYNC_S = 0.4
+
+
+def spawn_delayed_sync():
+    """Detached follow-up sync; the hook does not wait for it."""
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "delayed-sync"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        sys.stderr.write(f"agent-view-filters: delayed sync spawn failed: {e}\n")
+
+
+def delayed_sync():
+    """One pending delayed sync at a time (flock LOCK_NB): a burst of closes
+    coalesces into the already-sleeping process. The lock is dropped before
+    syncing so a later close can schedule another one."""
+    with open(os.path.join(state_dir(), "delayed.lock"), "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        time.sleep(DELAYED_SYNC_S)
+        fcntl.flock(f, fcntl.LOCK_UN)
+    run_sync()
+
+
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 else "cycle"
 
-    if action == "sync":
-        with state_lock():
-            mode = read_mode()
-            snap = take_snapshot()
-            sync_new_agents(snap)
-            excluded = prune_excluded(snap)
-            apply_mode(mode, excluded, snap)
-        print(f"agent-view-filters: synced -> {mode}")
+    if action in ("sync", "sync-closed"):
+        closed = closed_pane_arg(sys.argv[2:])
+        if action == "sync-closed":
+            closed = closed or closed_pane_from_env()
+        run_sync(closed)
+        if action == "sync-closed":
+            spawn_delayed_sync()
+        return
+
+    if action == "delayed-sync":
+        delayed_sync()
         return
 
     if action != "cycle" and action not in MODES:
