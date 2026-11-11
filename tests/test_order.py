@@ -91,9 +91,9 @@ class PublishOrderTokens(Isolated):
         })
         # layout D: root = (tab, space, sub "├ repo" only with children)
         self.assertEqual({k: (v["title"], v["space"], v["sub"]) for k, v in t.items()}, {
-            "R": ("dev", "Work", "├ ◆ orchestrator"),
-            "C": ("├ logs", None, None),
-            "D": ("└ vim", None, None),
+            "R": ("dev", "Work", None),
+            "C": ("logs", None, None),
+            "D": ("vim", None, None),
             "A": ("ops", "Work", None),
             "S": ("home", "Home", None),
         })
@@ -107,9 +107,10 @@ class PublishOrderTokens(Isolated):
         self.assertEqual((t["D"]["title"], t["D"]["space"], t["D"]["sub"]),
                          ("dev", "Work", None))
         # R tem filho explícito: sub "├ repo"; C é o único filho -> "└ "
-        self.assertEqual((t["R"]["title"], t["R"]["sub"]), ("dev", "├ ◆ orchestrator"))
-        self.assertEqual((t["C"]["title"], t["C"]["space"], t["C"]["sub"]),
-                         ("└ logs", None, None))
+        self.assertEqual((t["R"]["title"], t["R"]["sub"], t["R"]["subtree"], t["R"]["coord"]),
+                         ("dev", None, "├", "◆ orchestrator"))
+        self.assertEqual((t["C"]["title"], t["C"]["space"], t["C"]["sub"], t["C"]["tree"]),
+                         ("logs", None, None, "└"))
         self.assertTrue(all(v["tree_ws"] is None for v in t.values()))
 
 

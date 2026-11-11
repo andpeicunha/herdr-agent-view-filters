@@ -1,5 +1,6 @@
-"""I5: modos não-picked publicam linhas planas (sem marca de árvore, sem $sub).
-Só `picked` publica "├ "/"└ " e o $sub do root com filhos."""
+"""I5: modos não-picked publicam linhas planas (sem tree/subtree/coord).
+Só `picked` publica `tree` ("├"/"└" em filha), `subtree` ("├" em root com
+filhos) e `coord` (só na coordenadora). title/sub nunca carregam marca."""
 import os
 import sys
 import unittest
@@ -50,10 +51,77 @@ class FlatInNonPickedModes(Isolated):
 class TreeMarksOnlyInPicked(Isolated):
     def test_picked_publishes_marks_and_sub(self):
         tok = publish("picked")
-        self.assertEqual(tok["R"]["sub"], "\u251c \u25c6 orchestrator")  # coordenadora: COORD_LABEL
-        self.assertTrue(tok["C"]["title"].startswith("\u2514 "))
-        self.assertEqual(tok["C"]["title"], "\u2514 logs")
+        self.assertEqual(tok["R"]["subtree"], "\u251c")
+        self.assertIsNone(tok["R"]["tree"])
+        self.assertEqual(tok["R"]["coord"], "\u25c6 orchestrator")  # coordenadora: COORD_LABEL
+        self.assertIsNone(tok["R"]["sub"])
+        self.assertEqual(tok["C"]["tree"], "\u2514")
+        self.assertEqual(tok["C"]["title"], "logs")
+        self.assertIsNone(tok["C"]["coord"])
         self.assertIsNone(tok["A"]["sub"])
+        self.assertIsNone(tok["A"]["tree"])
+        self.assertIsNone(tok["A"]["coord"])
+
+
+def run_publish(agents, panes, tabs=TABS):
+    """publish_tokens() (modo picked, config padrão) com FakeHerdr; -> FakeHerdr."""
+    h = FakeHerdr(agents, panes, tabs=tabs)
+    with mocked(h):
+        av.publish_tokens()
+    return h
+
+
+def feed_back(panes, h):
+    """Simula o Herdr guardando os tokens publicados: campos None somem."""
+    by = h.tokens()
+    for p in panes:
+        merged = {**p.get("tokens", {}), **by.get(p["pane_id"], {})}
+        p["tokens"] = {k: v for k, v in merged.items() if v is not None}
+
+
+class TreeCoordLifecycle(Isolated):
+    def test_two_children_tree_mark_is_tee_then_corner(self):
+        agents = [agent("R", "t1", "w1"), agent("C1", "t1", "w1"), agent("C2", "t1", "w1")]
+        panes = [pane("R", "t1", "w1"), pane("C1", "t1", "w1", parent="R", label="logs"),
+                 pane("C2", "t1", "w1", parent="R", label="vim")]
+        tok = run_publish(agents, panes).tokens()
+        self.assertEqual(tok["C1"]["tree"], "\u251c")  # não-último: ├
+        self.assertEqual(tok["C2"]["tree"], "\u2514")  # último: └
+        self.assertEqual((tok["C1"]["title"], tok["C2"]["title"]), ("logs", "vim"))
+        self.assertEqual(tok["R"]["subtree"], "\u251c")
+
+    def test_tree_cleared_when_child_becomes_root(self):
+        agents = [agent("R", "t1", "w1"), agent("C", "t1", "w1")]
+        panes = [pane("R", "t1", "w1"), pane("C", "t1", "w1", parent="R", label="logs")]
+        h1 = run_publish(agents, panes)
+        self.assertEqual(h1.tokens()["C"]["tree"], "\u2514")
+        feed_back(panes, h1)
+        # C deixa de ser filha: sem parent e em outra tab (group_by_tab agrupa
+        # filhos da mesma tab da raiz, mesmo sem token parent)
+        panes[1]["tokens"].pop("parent", None)
+        panes[1]["tab_id"] = agents[1]["tab_id"] = "t2"
+        h2 = run_publish(agents, panes)
+        self.assertIn("C", h2.tokens(), "C não republicou ao perder a marca")
+        self.assertIsNone(h2.tokens()["C"]["tree"])
+        self.assertIsNone(h2.tokens()["C"]["subtree"])
+
+    def test_coord_cleared_when_coordinator_loses_children_then_not_republished(self):
+        agents = [agent("R", "t1", "w1"), agent("C", "t1", "w1")]
+        panes = [pane("R", "t1", "w1"), pane("C", "t1", "w1", parent="R", label="logs")]
+        h1 = run_publish(agents, panes)
+        self.assertEqual(h1.tokens()["R"]["coord"], "\u25c6 orchestrator")
+        feed_back(panes, h1)
+        # R sem filhos: deixa de ser coordenadora
+        agents, panes = [agent("R", "t1", "w1")], [pane("R", "t1", "w1")]
+        feed_back(panes, h1)
+        h2 = run_publish(agents, panes)
+        self.assertIn("R", h2.tokens(), "R não republicou ao perder coord")
+        self.assertIsNone(h2.tokens()["R"]["coord"])
+        self.assertIsNone(h2.tokens()["R"]["subtree"])
+        # já limpo: nova sincronização não republica R
+        feed_back(panes, h2)
+        h3 = run_publish(agents, panes)
+        self.assertNotIn("R", h3.tokens())
 
 
 if __name__ == "__main__":

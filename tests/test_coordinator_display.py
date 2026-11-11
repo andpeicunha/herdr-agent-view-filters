@@ -33,7 +33,9 @@ def fake(tabs=TABS, r_label="agent-view-filters", c_label=None, c_title="orchest
 class CoordinatorDisplay(Isolated):
     def test_picked_sub_is_marker_orchestrator_despite_label(self):
         t = run(fake())
-        self.assertEqual(t["R"]["sub"], "├ " + COORD)
+        self.assertEqual((t["R"]["subtree"], t["R"]["coord"]), ("├", COORD))
+        self.assertIsNone(t["R"]["sub"])  # nome so em $coord
+        self.assertIsNone(t["C"]["coord"])
 
     def test_other_modes_row_shows_orchestrator_when_title_falls_to_label(self):
         # tab numerica -> o titulo da raiz cai no display label
@@ -42,15 +44,17 @@ class CoordinatorDisplay(Isolated):
                 continue
             with self.subTest(mode=mode):
                 t = run(fake(tabs=NUM_TABS), mode)
-                self.assertEqual(t["R"]["title"], COORD)
+                self.assertEqual(t["R"]["coord"], COORD)
+                self.assertNotIn("◆", t["R"]["title"])
+                self.assertIsNone(t["R"]["subtree"])
 
     def test_child_generic_title_uses_label(self):
         t = run(fake(c_label="worker-x"))
-        self.assertEqual(t["C"]["title"], "└ worker-x")
+        self.assertEqual((t["C"]["tree"], t["C"]["title"]), ("└", "worker-x"))
 
     def test_child_without_label_uses_cwd_basename(self):
         t = run(fake())
-        self.assertEqual(t["C"]["title"], "└ my-repo")
+        self.assertEqual((t["C"]["tree"], t["C"]["title"]), ("└", "my-repo"))
 
     def test_group_name_stays_tab_label(self):
         t = run(fake())

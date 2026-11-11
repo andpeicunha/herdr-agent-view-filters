@@ -67,8 +67,12 @@ How: the view sort is `[{token: space_rank}, {token: order}, pane_order]` (all a
 - `space_rank` = 4-digit rank of the pane's space (sidebar order; children use the root's)
 - `order` = 4-digit position inside the space (tab order from `tab.list`, root,
   children in `pane.list` order = layout order)
-- `title` / `space` / `sub` = sidebar display texts (see "Sidebar layout");
-  the old `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
+- `title` / `space` / `sub` = sidebar display texts, names only (see "Sidebar layout")
+- `tree` = `├` / `└` on a child (`picked` only)
+- `subtree` = `├` on a root with children (`picked` only, second row)
+- `coord` = `◆ orchestrator` on a coordinator row (every mode)
+- `role` = `coordinator` on a coordinator root (every mode)
+- the old `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
   reported as `null` (cleared)
 
 Saved `order` / `space_order` in an old state.json are ignored. A pane whose
@@ -255,26 +259,40 @@ Two sources, in this priority:
   grandchildren flatten to the root. If the root closes, the next first pane of
   the tab becomes the root.
 - `picked`: children are hidden when their root (or its space) is excluded.
-- Tree marks and the `$sub` row exist only in `picked` (see "Sidebar layout").
+- Tree marks (`$tree`, `$subtree`) and the `$sub` row exist only in `picked` (see "Sidebar layout").
 
 ## Sidebar layout
 
-The plugin publishes `title`, `space` and `sub` per agent pane. Herdr indents
-every row after the first of an agent by 2 columns, so the display label of a
-root with children goes in a second row (`$sub`). Herdr hides a row when none of
-its tokens has a value.
+The plugin publishes one token per part of the row, so each part can have its
+own color. Names are never glued to marks in the token values:
 
-Tree marks (`├` / `└`, the `$sub` row) are published ONLY in `picked` mode:
+- `$title` / `$space`: tab label and workspace label (flat rows and roots/standalone).
+- `$sub`: display label of a root with children (second row). Herdr indents every
+  row after the first of an agent by 2 columns. Herdr hides a row when none of its
+  tokens has a value.
+- `$tree`: `├` / `└` on a child (`└` for the last child), first row. `picked` only.
+- `$subtree`: `├` on a root with children, second row. `picked` only.
+- `$coord`: `◆ orchestrator` on a coordinator row, in every mode. The coordinator
+  name lives only in `$coord`; its `$sub` is absent.
 
-| pane (`picked`) | `$title` | `$space` | `$sub` |
-| --- | --- | --- | --- |
-| root with children | tab label | workspace label | `├ ` + display label |
-| child | `├ ` / `└ ` (last child) + display label | absent | absent |
-| standalone | tab label | workspace label | absent |
+Per pane, `picked`:
 
-In `active`, `space` and `all` every agent gets a flat row: `$title` = tab
-label (display label when the tab label is empty/numeric), `$space` = workspace
-label, `$sub` absent. Order still follows the tree, but children carry no mark.
+| pane (`picked`) | `$tree` | `$title` | `$space` | `$subtree` | `$sub` | `$coord` |
+| --- | --- | --- | --- | --- | --- | --- |
+| root with children | absent | tab label | workspace label | `├` | display label | absent |
+| coordinator root | absent | tab label | workspace label | `├` | absent | `◆ orchestrator` |
+| child | `├` / `└` (last child) | display label | absent | absent | absent | absent |
+| standalone | absent | tab label | workspace label | absent | absent | absent |
+
+In `active`, `space` and `all` every agent gets a flat row: `$title` = tab label
+(display label when the tab label is empty/numeric), `$space` = workspace label,
+`$tree` / `$subtree` / `$sub` absent. `$coord` still shows on coordinator rows.
+Order still follows the tree, but children carry no mark.
+
+Config and plugin must match: a `[ui.sidebar.agents]` layout without `$tree`,
+`$subtree` and `$coord` hides the marks and the coordinator label, even though the
+plugin publishes them. Herdr joins adjacent values with " · " and drops missing
+ones with their separator.
 
 Title falls back to the display label when the tab label is empty or purely numeric (e.g. `1`).
 
@@ -297,10 +315,16 @@ plugin is active, so the layout below uses the custom tokens only.
 
 ```toml
 [ui.sidebar.agents]
+# $title / $space / $sub / $tree / $subtree / $coord come from the agent-view-filters
+# plugin (one token per color). $tree = child mark (row 1), $subtree = root mark
+# (row 2), $coord = "◆ orchestrator" (coordinator only). Herdr joins adjacent
+# values with " · " (no glue option) and drops missing tokens with their separator.
+# No token fallback syntax, so native `tab` / `workspace` are not added (they would
+# duplicate the names); rows stay icon-only until the plugin's first sync.
 row_gap = 0
 rows = [
-  ["state_icon", { token = "$title", fg = "#f8f8f2", bold = true }, { token = "$space", fg = "#6272a4" }],
-  [{ token = "$sub", fg = "#f8f8f2" }],
+  ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }, { token = "$space", fg = "#6272a4" }],
+  [{ token = "$subtree", fg = "#555a66" }, { token = "$sub", fg = "#f8f8f2" }, { token = "$coord", fg = "#bd93f9", bold = true }],
 ]
 ```
 

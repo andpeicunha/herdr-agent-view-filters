@@ -137,7 +137,7 @@ class RunSyncClosed(Isolated):
         last_r = [p for p in h.methods("pane.report_metadata") if p["pane_id"] == "R"]
         self.assertTrue(last_r, "root não publicou tokens")
         for p in last_r:
-            self.assertFalse(str(p["tokens"].get("sub") or "").startswith("├"),
+            self.assertIsNone(p["tokens"].get("subtree"),
                              f"root ainda publica sub de filho fechado: {p['tokens']}")
         st = self.state_file()
         self.assertNotIn("C", st.get("seen", []))
@@ -151,8 +151,7 @@ class RunSyncClosed(Isolated):
         with mocked(h), contextlib.redirect_stdout(io.StringIO()):
             av.run_sync(None)
         last_r = [p for p in h.methods("pane.report_metadata") if p["pane_id"] == "R"]
-        self.assertTrue(any(str(p["tokens"].get("sub") or "").startswith("├")
-                            for p in last_r))
+        self.assertTrue(any(p["tokens"].get("subtree") == "├" for p in last_r))
 
 
 class DelayedSync(Isolated):
@@ -230,7 +229,7 @@ class MainSyncClosed(Isolated):
         self.assertTrue(kwargs.get("start_new_session"))
         for p in h.methods("pane.report_metadata"):
             if p["pane_id"] == "R":
-                self.assertFalse(str(p["tokens"].get("sub") or "").startswith("├"))
+                self.assertIsNone(p["tokens"].get("subtree"))
 
     def test_main_with_closed_flag_argument(self):
         with mock.patch.object(sys, "argv", ["agent_view.py", "sync-closed", "--closed", "R"]), \

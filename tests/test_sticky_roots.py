@@ -206,7 +206,7 @@ class EmptyRepoSub(Isolated):
         self.assertIsNone(av.row_tokens("dev", "Work", "")["sub"])
 
     def test_publish_sends_sub_null_for_root_without_repo(self):
-        # R com filho = coordenadora -> sub "├ ◆ orchestrator" mesmo sem repo.
+        # R com filho = coordenadora -> subtree "├" + coord "◆ orchestrator" mesmo sem repo (sub None).
         # Z sem filhos (outra tab) = raiz comum -> sub None.
         agents = [{"pane_id": "R", "tab_id": "t1", "workspace_id": "w1", "agent": "",
                    "cwd": "", "agent_status": "idle"},
@@ -218,9 +218,14 @@ class EmptyRepoSub(Isolated):
                                            {"tab_id": "t2", "label": "ops"}])
         with mocked(h):
             av.publish_tokens()
-        self.assertEqual(h.tokens()["R"]["sub"], "\u251c \u25c6 orchestrator")
+        self.assertIsNone(h.tokens()["R"]["sub"])
+        self.assertEqual(h.tokens()["R"]["subtree"], "\u251c")
+        self.assertIsNone(h.tokens()["R"]["tree"])
+        self.assertEqual(h.tokens()["R"]["coord"], "\u25c6 orchestrator")
         self.assertEqual(h.tokens()["R"]["title"], "dev")
         self.assertIsNone(h.tokens()["Z"]["sub"])
+        self.assertIsNone(h.tokens()["Z"]["tree"])
+        self.assertIsNone(h.tokens()["Z"]["coord"])
         self.assertEqual(h.tokens()["Z"]["title"], "ops")
 
 

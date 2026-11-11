@@ -32,12 +32,12 @@ class RowTokens(unittest.TestCase):
     def test_keys_and_values(self):
         self.assertEqual(av.row_tokens("dev", "Work", "├ R"),
                          {"title": "dev", "space": "Work", "sub": "├ R",
-                          "group": None, "group_space": None, "item": None})
+                          "tree": None, "subtree": None, "coord": None, "group": None, "group_space": None, "item": None})
 
     def test_none_and_empty_are_absent(self):
         self.assertEqual(av.row_tokens(None, "", None),
                          {"title": None, "space": None, "sub": None,
-                          "group": None, "group_space": None, "item": None})
+                          "tree": None, "subtree": None, "coord": None, "group": None, "group_space": None, "item": None})
 
     def test_truncated_to_token_max(self):
         out = av.row_tokens("x" * 300, None, "y" * 300)

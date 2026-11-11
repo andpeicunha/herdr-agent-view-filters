@@ -12,8 +12,10 @@ always: space order (native sidebar workspace order) -> tab order -> root agent
 -> its children (layout order). There is no manual ordering. "all" clears the
 view and keeps Herdr's native priority order.
 
-Tree marks (the "├ " / "└ " prefixes in `$title`, the `$sub` row) are published
-only in `picked` mode. active / space / all publish flat rows: title = tab
+Tree marks are separate tokens (own color) published only in `picked` mode:
+`$tree` = "├" / "└" on a child (first row), `$subtree` = "├" on a root with
+children (second row); `$coord` = "◆ orchestrator" is published on
+coordinator rows in every mode (title/sub hold names only). active / space / all publish flat rows: title = tab
 (display label when the tab label is empty/numeric), space = workspace, sub
 absent.
 
@@ -567,11 +569,14 @@ def group_marks(seq, tree):
     return marks, set(kids)
 
 
-def row_tokens(title, space, sub):
+def row_tokens(title, space, sub, tree=None, coord=None, subtree=None):
     """Pure. Layout D display tokens, truncated; None/empty -> None (absent).
+    `tree` = bare child mark ("├"/"└", first row), `subtree` = "├" of a root with
+    children (second row), `coord` = COORD_LABEL (coordinator only).
     `group`, `group_space` and `item` are legacy tokens, always cleared."""
     out = {k: ((v or "")[:TOKEN_MAX_LEN] or None)
-           for k, v in (("title", title), ("space", space), ("sub", sub))}
+           for k, v in (("title", title), ("space", space), ("sub", sub),
+                        ("tree", tree), ("subtree", subtree), ("coord", coord))}
     out.update(group=None, group_space=None, item=None)
     return out
 
@@ -945,26 +950,49 @@ def display_label(a, ctx):
     return ""
 
 
-def row_texts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
-    """Pure-ish. Layout D texts (title, space, sub) of one agent.
+def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
+    """Pure-ish. Separate display parts of one agent (per-token colors).
 
-    Herdr indents every row after the first of an agent, so a root with
-    children carries its display label in the second row (`$sub`).
-    child (mark "├ "/"└ "): title = mark + display label, rest None.
+    -> (title, space, sub, tree, coord, subtree). `tree` is the bare child mark
+    ("├"/"└", no trailing space, first row) and `subtree` the "├" of a root with
+    children (second row, next to `sub`/`coord`); None elsewhere. Two tokens
+    because the row layout is per token, not per agent. `coord` is COORD_LABEL on a coordinator row (None
+    elsewhere) and title/sub never repeat it: they hold names only.
+    child (mark): title = display label, tree = mark char.
     root with children (has_children): title = tab label (empty/numeric ->
-    display label), space = workspace label, sub = "├ " + display label.
-    standalone / flat row (no mark, has_children False): title = tab label
-    (same fallback), space = workspace label, sub None.
-    is_coord: the display label is COORD_LABEL ("◆ orchestrator"); the group
-    title (tab label) is unchanged.
+    display label), space = workspace label, sub = display label (None for a
+    coordinator: `coord` carries the name), subtree = "├".
+    standalone / flat row: title = tab label (same fallback), space = workspace
+    label, sub/tree None.
     """
-    rl = COORD_LABEL if is_coord else display_label(a, ctx)
+    rl = display_label(a, ctx)
+    coord = COORD_LABEL if is_coord else None
     if mark:
-        return mark + rl, None, None
+        return rl, None, None, mark.strip() or None, coord, None
     tab = (ctx[0].get(a.get("tab_id"), {}).get("label") or "").strip()
     name = (rl if (not tab or tab.isdigit()) else tab) or agent_name(a, ctx)
     space = (ws_labels.get(a.get("workspace_id")) or "").strip()
-    return name, space, (MID_PREFIX + rl) if (has_children and rl) else None
+    sub = rl if (has_children and rl and not is_coord) else None
+    return (name, space, sub, None, coord,
+            MID_PREFIX.strip() if has_children else None)
+
+
+def row_texts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
+    """Pure-ish. Single-text form of row_parts (picker): marks and the
+    COORD_LABEL are glued back into title/sub -> (title, space, sub).
+
+    Herdr indents every row after the first of an agent, so a root with
+    children carries its label in the second row (`sub` = "├ " + label).
+    """
+    title, space, sub, _, coord, _ = row_parts(a, ctx, ws_labels, mark,
+                                               has_children, is_coord)
+    if mark:
+        return mark + (coord or title), None, None
+    if coord and not has_children and title == display_label(a, ctx):
+        title = coord  # title fell back to the label: the coordinator name
+    if has_children and (coord or sub):
+        sub = MID_PREFIX + (coord or sub)
+    return title, space, sub
 
 
 def tab_fallback_roots(agents, panes, tree, stored_parents=None, fallback=None):
@@ -1022,15 +1050,18 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     Sort: `space_rank` = 4-digit rank of the pane's space (sidebar order),
     `order` = 4-digit position inside its space (see layout_sequence).
     Display (`$title`/`$space` first row, `$sub` second row, see row_texts):
-    in `picked` mode the tree marks are published: root with children -> title =
-    tab label (empty/numeric -> display label), space = workspace label, sub =
-    "├ label"; child -> title = "├ label" / "└ label" (last child); standalone ->
-    title = tab label, space = workspace label. In every other mode the rows are
-    flat (title = tab, space = workspace, sub absent). The old `tree_ws`,
-    `group`, `group_space`, `item`, `repo` and `name` tokens are cleared.
-    Coordinator roots (final roots of `tree` with >=1 child: `parent` target or
-    tab root with children) carry `role=coordinator` in EVERY mode; the token is
-    cleared once the pane has no children.
+    in `picked` mode the tree marks are published as separate tokens: root with
+    children -> title = tab label (empty/numeric -> display label), space =
+    workspace label, sub = display label, subtree = "├"; child -> title = display
+    label, tree = "├" / "└" (last child); standalone -> title = tab label, space =
+    workspace label. In every other mode the rows are flat (title = tab,
+    space = workspace; sub, tree and subtree absent). `coord` = "◆ orchestrator"
+    is published on coordinator rows in EVERY mode; title/sub hold names only
+    (sub is absent on a coordinator, the name lives in `coord`). The old
+    `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
+    cleared. Coordinator roots (final roots of `tree` with >=1 child: `parent`
+    target or tab root with children) carry `role=coordinator` in EVERY mode;
+    the token is cleared once the pane has no children.
     Best effort: a failing/dead pane is skipped, never raised. A pane whose
     published tokens already equal the desired ones is not rewritten, except
     every TOKEN_REFRESH_S so the 24h TTL never lapses. Returns the number of
@@ -1065,7 +1096,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         pane_id = a.get("pane_id")
         if not pane_id:
             continue
-        title, space, sub = row_texts(
+        title, space, sub, tree_mark, coord, subtree = row_parts(
             a, ctx, ws_labels, marks.get(pane_id) if pane_id in tree else None,
             pane_id in parents, pane_id in coords)
         tokens = {
@@ -1075,7 +1106,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
             "name": None,
             "tree_ws": None,
             "role": ROLE_COORDINATOR if pane_id in coords else None,
-            **row_tokens(title, space, sub),
+            **row_tokens(title, space, sub, tree_mark, coord, subtree),
         }
         if not force and _tokens_current(current.get(pane_id), tokens):
             n += 1
