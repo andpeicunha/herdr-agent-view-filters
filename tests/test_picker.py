@@ -75,7 +75,7 @@ class MakeRows(unittest.TestCase):
         self.assertEqual(summary(rows_for()), [
             ("space", "w1", 3, True),
             ("root", "R", "dev · Work", True),
-            ("item", "├ R"),
+            ("item", "├ ◆ orchestrator"),
             ("child", "C", "└ logs"),
             ("root", "A", "ops · Work", True),
             ("space", "w2", 1, True),
@@ -128,15 +128,16 @@ class MakeRows(unittest.TestCase):
         i = next(k for k, r in enumerate(rows) if r["kind"] == "root" and r["pane_id"] == "A")
         self.assertEqual(rows[i + 1]["kind"], "space")
 
-    def test_item_row_only_when_item_text_is_truthy(self):
-        # Root com filho mas repo label vazio: row_texts devolve item None -> sem linha item.
+    def test_coordinator_item_row_present_even_without_repo_text(self):
+        # Coordenadora (root com filho) sem texto de repo: item sempre '◆ orchestrator'.
         agents = [{"pane_id": "R", "tab_id": "t1", "workspace_id": "w1",
                    "agent": "", "cwd": "", "agent_status": "idle"},
                   agent("C", "t1", "w1", cwd="/x/C")]
         panes = [pane("R", "t1", "w1"), pane("C", "t1", "w1", parent="R")]
         c = (TABS, {p["pane_id"]: p for p in panes}, {"t1": 2})
         rows = picker.make_rows(agents, c, WS, WS_IDX, [], {"C": "R"})
-        self.assertEqual([r["kind"] for r in rows], ["space", "root", "child"])
+        self.assertEqual([r["kind"] for r in rows], ["space", "root", "item", "child"])
+        self.assertEqual([r["label"] for r in rows if r["kind"] == "item"], ["├ ◆ orchestrator"])
         self.assertEqual(find(rows, "child", "C")["label"], "└ C")
 
     def test_root_label_last_resort_is_pane_id(self):

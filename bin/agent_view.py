@@ -113,6 +113,8 @@ _config_cache = None
 CLOSED_COORD_MAX = 20       # closed_coordinators kept in state
 COORD_REFRESH_S = 3600      # rewrite a coordinator's last_seen at most this often
 ROLE_COORDINATOR = "coordinator"
+COORD_LABEL = "\u25c6 orchestrator"  # coordinator row text (marker + fixed name)
+GENERIC_TITLE = "orchestrator"      # agent-a profile title: useless as child name
 TOKEN_REFRESH_S = 6 * 3600  # force a token republish this often (TTL is 24h)
 
 
@@ -450,6 +452,14 @@ def build_tree(live, parents):
         if ok:
             out[c] = cur
     return out
+
+
+def coordinator_ids(tree):
+    """Pure. Set of root pane ids that have children (values of the tree).
+
+    tree: child_pane_id -> root_pane_id (as from build_tree); None means empty.
+    """
+    return set((tree or {}).values())
 
 
 def assign_first_seen(stored, live, alive=None):
@@ -916,7 +926,8 @@ def display_label(a, ctx):
 
     Priority: manual pane label (cleaned; cwd basename or "<basename> #N" = auto),
     Herdr agent name, terminal title (cleaned), repo (cwd basename without
-    leading dots), agent kind. Never empty while any source exists.
+    leading dots), agent kind. Never empty while any source exists. The generic
+    terminal title "orchestrator" is skipped (falls to repo / agent kind).
     """
     pane = ctx[1].get(a.get("pane_id"), {})
     cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
@@ -924,16 +935,17 @@ def display_label(a, ctx):
     manual = clean_label(pane.get("label")).strip()
     if is_auto_label(manual, cwd):
         manual = ""
-    for cand in (manual, a.get("name"),
-                 clean_label(a.get("terminal_title_stripped") or a.get("terminal_title")),
-                 repo, a.get("agent")):
+    title = clean_label(a.get("terminal_title_stripped") or a.get("terminal_title"))
+    if title.strip().casefold() == GENERIC_TITLE:
+        title = ""
+    for cand in (manual, a.get("name"), title, repo, a.get("agent")):
         cand = (cand or "").strip()
         if cand:
             return cand[:TOKEN_MAX_LEN]
     return ""
 
 
-def row_texts(a, ctx, ws_labels, mark=None, has_children=False):
+def row_texts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     """Pure-ish. Layout D texts (title, space, sub) of one agent.
 
     Herdr indents every row after the first of an agent, so a root with
@@ -943,8 +955,10 @@ def row_texts(a, ctx, ws_labels, mark=None, has_children=False):
     display label), space = workspace label, sub = "├ " + display label.
     standalone / flat row (no mark, has_children False): title = tab label
     (same fallback), space = workspace label, sub None.
+    is_coord: the display label is COORD_LABEL ("◆ orchestrator"); the group
+    title (tab label) is unchanged.
     """
-    rl = display_label(a, ctx)
+    rl = COORD_LABEL if is_coord else display_label(a, ctx)
     if mark:
         return mark + rl, None, None
     tab = (ctx[0].get(a.get("tab_id"), {}).get("label") or "").strip()
@@ -1039,7 +1053,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         marks, parents = group_marks(seq, tree)
     else:
         marks, parents = {}, set()
-    coords = set((tree or {}).values())  # roots with children, in every mode
+    coords = coordinator_ids(tree)  # roots with children, in every mode
     rank = {}
     for pid in seq:
         rank.setdefault(space_key[pid], len(rank))
@@ -1053,7 +1067,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
             continue
         title, space, sub = row_texts(
             a, ctx, ws_labels, marks.get(pane_id) if pane_id in tree else None,
-            pane_id in parents)
+            pane_id in parents, pane_id in coords)
         tokens = {
             "space_rank": f"{rank[space_key[pane_id]]:04d}" if pane_id in space_key else None,
             "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
@@ -1147,7 +1161,7 @@ def record_coordinators(snap, tree, now=None):
         by_agent = {a.get("pane_id"): a for a in agents}
         new = {pid: coordinator_entry(pid, by_pane.get(pid), by_agent.get(pid),
                                       stored.get(pid), now)
-               for pid in sorted(set((tree or {}).values()))}
+               for pid in sorted(coordinator_ids(tree))}
         new_closed = list(closed)
         for pid, info in stored.items():
             if pid not in new and pid not in by_pane:

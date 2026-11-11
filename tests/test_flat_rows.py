@@ -50,7 +50,7 @@ class FlatInNonPickedModes(Isolated):
 class TreeMarksOnlyInPicked(Isolated):
     def test_picked_publishes_marks_and_sub(self):
         tok = publish("picked")
-        self.assertEqual(tok["R"]["sub"], "\u251c R")  # display_label de R: cwd "/x/R"
+        self.assertEqual(tok["R"]["sub"], "\u251c \u25c6 orchestrator")  # coordenadora: COORD_LABEL
         self.assertTrue(tok["C"]["title"].startswith("\u2514 "))
         self.assertEqual(tok["C"]["title"], "\u2514 logs")
         self.assertIsNone(tok["A"]["sub"])

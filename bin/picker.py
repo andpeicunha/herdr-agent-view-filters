@@ -47,6 +47,7 @@ def make_rows(agents, ctx, ws, ws_idx, excluded, tree):
     panes = list(ctx[1].values())
     seq, space_key = av.layout_sequence(agents, panes, ctx[0], ws_idx, tree)
     marks, parents = av.group_marks(seq, tree)
+    coords = av.coordinator_ids(tree)
     tab_roots = av.tab_fallback_roots(agents, panes, tree)
     rows = []
     last = None
@@ -62,11 +63,13 @@ def make_rows(agents, ctx, ws, ws_idx, excluded, tree):
                          "selectable": True})
         status = a.get("agent_status") or "unknown"
         if pid in tree:
-            title, _, _ = av.row_texts(a, ctx, ws, marks.get(pid))
+            title, _, _ = av.row_texts(a, ctx, ws, marks.get(pid), False,
+                                       pid in coords)
             rows.append({"kind": "child", "pane_id": pid, "status": status,
                          "label": title or pid, "selectable": False})
         else:
-            title, space, sub = av.row_texts(a, ctx, ws, None, pid in parents)
+            title, space, sub = av.row_texts(a, ctx, ws, None, pid in parents,
+                                             pid in coords)
             tab = a.get("tab_id")
             # A "tab:<id>" entry hides every agent of the tab, so a lone pane in an
             # excluded tab is represented by that entry (toggling it removes it).

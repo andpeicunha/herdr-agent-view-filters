@@ -206,15 +206,22 @@ class EmptyRepoSub(Isolated):
         self.assertIsNone(av.row_tokens("dev", "Work", "")["sub"])
 
     def test_publish_sends_sub_null_for_root_without_repo(self):
+        # R com filho = coordenadora -> sub "├ ◆ orchestrator" mesmo sem repo.
+        # Z sem filhos (outra tab) = raiz comum -> sub None.
         agents = [{"pane_id": "R", "tab_id": "t1", "workspace_id": "w1", "agent": "",
                    "cwd": "", "agent_status": "idle"},
-                  agent("C", "t1", cwd="/x/C")]
-        panes = [pane("R", "t1"), pane("C", "t1", parent="R")]
-        h = FakeHerdr(agents, panes, tabs=[{"tab_id": "t1", "label": "dev"}])
+                  agent("C", "t1", cwd="/x/C"),
+                  {"pane_id": "Z", "tab_id": "t2", "workspace_id": "w1", "agent": "",
+                   "cwd": "", "agent_status": "idle"}]
+        panes = [pane("R", "t1"), pane("C", "t1", parent="R"), pane("Z", "t2")]
+        h = FakeHerdr(agents, panes, tabs=[{"tab_id": "t1", "label": "dev"},
+                                           {"tab_id": "t2", "label": "ops"}])
         with mocked(h):
             av.publish_tokens()
-        self.assertIsNone(h.tokens()["R"]["sub"])
+        self.assertEqual(h.tokens()["R"]["sub"], "\u251c \u25c6 orchestrator")
         self.assertEqual(h.tokens()["R"]["title"], "dev")
+        self.assertIsNone(h.tokens()["Z"]["sub"])
+        self.assertEqual(h.tokens()["Z"]["title"], "ops")
 
 
 if __name__ == "__main__":

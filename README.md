@@ -239,7 +239,7 @@ agent state in a future release.
 Two sources, in this priority:
 
 1. **Parent token** (explicit): the `parent=<pane_id>` pane token, set by the
-   `herdr-cursor-agent.sh` spawn script. The parent may live in another tab or
+   `herdr-claude-agent.sh` spawn script. The parent may live in another tab or
    space: the child is listed under it there. A live parent always wins. Valid relations are persisted in `state.json` (`parents`:
    child pane id -> parent pane id); when the token expires, the stored relation
    keeps the group while both panes are alive (a live token overrides it; dead
