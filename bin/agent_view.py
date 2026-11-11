@@ -110,6 +110,9 @@ def state_path():
 _lock_depth = 0
 _state_cache = None   # state.json / config.toml parsed once per locked invocation
 _config_cache = None
+CLOSED_COORD_MAX = 20       # closed_coordinators kept in state
+COORD_REFRESH_S = 3600      # rewrite a coordinator's last_seen at most this often
+ROLE_COORDINATOR = "coordinator"
 TOKEN_REFRESH_S = 6 * 3600  # force a token republish this often (TTL is 24h)
 
 
@@ -159,16 +162,18 @@ def read_state():
 
 
 def write_state(mode, excluded, seen=None, first_seen=None, tab_roots=None,
-                parents=None, published_at=None):
+                parents=None, published_at=None, coordinators=None,
+                closed_coordinators=None):
     """Atomic write under state_lock. seen/first_seen/tab_roots/parents/
-    published_at=None keep the stored value. Old keys (order...) are dropped."""
+    published_at/coordinators/closed_coordinators=None keep the stored value
+    ({} / [] clear the last two). Old keys (order...) are dropped."""
     with state_lock():
         _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
-                     published_at)
+                     published_at, coordinators, closed_coordinators)
 
 
 def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
-                 published_at=None):
+                 published_at=None, coordinators=None, closed_coordinators=None):
     global _state_cache
     st = read_state()
     if seen is None:
@@ -181,6 +186,10 @@ def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
         parents = read_parents(st)
     if published_at is None:
         published_at = read_published_at(st)
+    if coordinators is None:
+        coordinators = read_coordinators(st)
+    if closed_coordinators is None:
+        closed_coordinators = read_closed_coordinators(st)
     path = state_path()
     data = {"mode": mode, "excluded": sorted(set(excluded))}
     if isinstance(seen, list):  # absent key = "never initialised" (see apply_new_policy)
@@ -193,6 +202,10 @@ def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
         data["parents"] = parents
     if published_at:
         data["published_at"] = published_at
+    if coordinators:
+        data["coordinators"] = coordinators
+    if closed_coordinators:
+        data["closed_coordinators"] = closed_coordinators
     fd, tmp = tempfile.mkstemp(dir=state_dir(), prefix="state.json.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -237,6 +250,22 @@ def read_parents(st=None):
     if not isinstance(d, dict):
         return {}
     return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def read_coordinators(st=None):
+    """Stored `coordinators` (pane_id -> info dict); invalid/missing -> {}."""
+    d = (read_state() if st is None else st).get("coordinators")
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, dict)}
+
+
+def read_closed_coordinators(st=None):
+    """Stored `closed_coordinators` (newest last); invalid/missing -> []."""
+    d = (read_state() if st is None else st).get("closed_coordinators")
+    if not isinstance(d, list):
+        return []
+    return [v for v in d if isinstance(v, dict)][-CLOSED_COORD_MAX:]
 
 
 def read_mode():
@@ -985,6 +1014,9 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     title = tab label, space = workspace label. In every other mode the rows are
     flat (title = tab, space = workspace, sub absent). The old `tree_ws`,
     `group`, `group_space`, `item`, `repo` and `name` tokens are cleared.
+    Coordinator roots (final roots of `tree` with >=1 child: `parent` target or
+    tab root with children) carry `role=coordinator` in EVERY mode; the token is
+    cleared once the pane has no children.
     Best effort: a failing/dead pane is skipped, never raised. A pane whose
     published tokens already equal the desired ones is not rewritten, except
     every TOKEN_REFRESH_S so the 24h TTL never lapses. Returns the number of
@@ -1007,6 +1039,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         marks, parents = group_marks(seq, tree)
     else:
         marks, parents = {}, set()
+    coords = set((tree or {}).values())  # roots with children, in every mode
     rank = {}
     for pid in seq:
         rank.setdefault(space_key[pid], len(rank))
@@ -1027,6 +1060,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
             "repo": None,
             "name": None,
             "tree_ws": None,
+            "role": ROLE_COORDINATOR if pane_id in coords else None,
             **row_tokens(title, space, sub),
         }
         if not force and _tokens_current(current.get(pane_id), tokens):
@@ -1059,6 +1093,73 @@ def _tokens_current(existing, desired):
         return False
     return all((existing.get(k) == v) if v is not None else (k not in existing)
                for k, v in desired.items())
+
+
+_RESUME_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def resume_command(info):
+    """Pure. Suggested resume command of a coordinator entry (claude only)."""
+    sess = (info or {}).get("agent_session")
+    if not isinstance(sess, dict) or sess.get("agent") != "claude":
+        return None
+    v = sess.get("value")
+    if isinstance(v, str) and _RESUME_ID.match(v):
+        return f"claude --resume {v}"
+    return None
+
+
+def coordinator_entry(pid, pane_d, agent_d, prev, now):
+    """Pure. Info of one live coordinator: agent_session, label, tab, cwd,
+    last_seen (kept while nothing else changed and younger than COORD_REFRESH_S)."""
+    pane_d, agent_d, prev = pane_d or {}, agent_d or {}, prev or {}
+    sess = pane_d.get("agent_session") or agent_d.get("agent_session")
+    if not isinstance(sess, dict) or not sess.get("value"):
+        sess = prev.get("agent_session")
+    info = {
+        "agent_session": sess if isinstance(sess, dict) else None,
+        "label": pane_d.get("label") or agent_d.get("label") or prev.get("label"),
+        "tab": pane_d.get("tab_id") or agent_d.get("tab_id") or prev.get("tab"),
+        "cwd": pane_d.get("cwd") or agent_d.get("cwd") or prev.get("cwd"),
+    }
+    old_seen = prev.get("last_seen")
+    same = all(prev.get(k) == v for k, v in info.items())
+    fresh = isinstance(old_seen, (int, float)) and now - old_seen < COORD_REFRESH_S
+    info["last_seen"] = old_seen if same and fresh else now
+    return info
+
+
+def record_coordinators(snap, tree, now=None):
+    """Persist coord pane_id -> info for every live coordinator root, and move
+    one that is no longer a live pane (closed / exited, `drop_closed` already
+    removed it from the snapshot) into `closed_coordinators` (newest last, max
+    CLOSED_COORD_MAX) with closed_at and a `claude --resume` suggestion. A
+    coordinator that is alive but lost its children is just forgotten. Skips
+    when agent.list / pane.list failed. Writes only when something changed."""
+    agents, panes = snap.get("agents"), snap.get("panes")
+    if agents is None or not panes:
+        return
+    now = time.time() if now is None else now
+    with state_lock():
+        st = read_state()
+        stored, closed = read_coordinators(st), read_closed_coordinators(st)
+        by_pane = {p.get("pane_id"): p for p in panes}
+        by_agent = {a.get("pane_id"): a for a in agents}
+        new = {pid: coordinator_entry(pid, by_pane.get(pid), by_agent.get(pid),
+                                      stored.get(pid), now)
+               for pid in sorted(set((tree or {}).values()))}
+        new_closed = list(closed)
+        for pid, info in stored.items():
+            if pid not in new and pid not in by_pane:
+                entry = {"pane_id": pid, **info, "closed_at": now}
+                cmd = resume_command(info)
+                if cmd:
+                    entry["resume"] = cmd
+                new_closed.append(entry)
+        new_closed = new_closed[-CLOSED_COORD_MAX:]
+        if new != stored or new_closed != closed:
+            write_state(read_mode(), read_excluded(), coordinators=new,
+                        closed_coordinators=new_closed)
 
 
 def prune_excluded(snap=None):
@@ -1111,6 +1212,7 @@ def _apply_mode(mode, excluded, snap):
         # Empty exclusion -> match-everything view, so the sort still applies.
         flt = {"op": "not", "filter": {"op": "in", "field": "pane_id",
                                        "values": eff or ["__none__"]}}
+    record_coordinators(snap, tree)
     publish_tokens(agents, tree=tree, snap=snap, mode=mode)
     if mode == "all":
         req = {"id": "avf_clear", "method": "agent.view.clear", "params": {"source": SOURCE}}
@@ -1144,8 +1246,11 @@ def closed_pane_arg(args):
 
 
 def closed_pane_from_env():
-    """pane_id of a pane.closed hook (HERDR_PLUGIN_EVENT_JSON), or None."""
-    if os.environ.get("HERDR_PLUGIN_EVENT") != "pane.closed":
+    """pane_id of a pane.closed / pane.exited hook (HERDR_PLUGIN_EVENT_JSON), or
+    None."""
+    if os.environ.get("HERDR_PLUGIN_EVENT") not in (
+        "pane.closed", "pane_closed", "pane.exited", "pane_exited"
+    ):
         return None
     try:
         data = json.loads(os.environ.get("HERDR_PLUGIN_EVENT_JSON") or "")
