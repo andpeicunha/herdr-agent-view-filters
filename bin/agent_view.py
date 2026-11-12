@@ -117,6 +117,7 @@ COORD_REFRESH_S = 3600      # rewrite a coordinator's last_seen at most this oft
 ROLE_COORDINATOR = "coordinator"
 COORD_LABEL = "\u25c6 orchestrator"  # coordinator row text (marker + fixed name)
 GENERIC_TITLE = "orchestrator"      # agent-a profile title: useless as child name
+SUBAGENT_TTL_S = 60 * 60    # a subagent entry older than this is stale (ignored)
 TOKEN_REFRESH_S = 6 * 3600  # force a token republish this often (TTL is 24h)
 
 
@@ -1383,6 +1384,44 @@ def main():
         apply_mode(mode, excluded, snap)
         write_mode(mode)
     print(f"agent-view-filters: mode -> {mode}")
+
+
+def subagents_dir():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "herdr-agents", "subagents")
+
+
+def has_active_subagent(pane_id, now=None, directory=None):
+    """Read-only: True if the hook-maintained file for `pane_id` has a line
+    "agent_id epoch_seconds" newer than SUBAGENT_TTL_S. Any error/malformed -> False."""
+    if not pane_id or "/" in str(pane_id) or str(pane_id).startswith("."):
+        return False
+    path = os.path.join(directory or subagents_dir(), str(pane_id))
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read(65536).splitlines()
+    except OSError:
+        return False
+    now = time.time() if now is None else now
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        try:
+            ts = float(parts[1])
+        except ValueError:
+            continue
+        if ts == ts and 0 <= now - ts <= SUBAGENT_TTL_S:
+            return True
+    return False
+
+
+def effective_status(agent, now=None, directory=None):
+    status = agent.get("agent_status") or "unknown"
+    if status in ("idle", "done") and has_active_subagent(
+            agent.get("pane_id"), now, directory):
+        return "working"
+    return status
 
 
 if __name__ == "__main__":

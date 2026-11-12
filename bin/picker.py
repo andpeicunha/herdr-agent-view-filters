@@ -61,7 +61,7 @@ def make_rows(agents, ctx, ws, ws_idx, excluded, tree):
             rows.append({"kind": "space", "id": wid, "label": ws.get(wid, wid) or "-",
                          "count": n, "checked": av.space_entry(wid) not in ex,
                          "selectable": True})
-        status = a.get("agent_status") or "unknown"
+        status = av.effective_status(a)
         if pid in tree:
             title, _, _ = av.row_texts(a, ctx, ws, marks.get(pid), False,
                                        pid in coords)

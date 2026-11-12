@@ -185,6 +185,16 @@ fsync, then `os.replace`). The picker
 re-reads the state under the lock before saving and only changes `excluded`
 (`seen`, `first_seen`, `tab_roots` and `parents` are merged, not overwritten).
 
+### Subagent status
+
+Herdr's status only reflects the main Claude session. The picker dot shows
+`working` instead of `idle`/`done` while the pane has an active subagent, read
+(never written) from
+`${XDG_STATE_HOME:-~/.local/state}/herdr-agents/subagents/<pane_id>`, one
+`agent_id epoch_seconds` line per subagent. Entries older than 60 min
+(`SUBAGENT_TTL_S` in `bin/agent_view.py`) are ignored; a missing or malformed
+file falls back to the Herdr status.
+
 ## Upgrading from 0.9.x
 
 0.10.0 changes behavior:
