@@ -956,6 +956,22 @@ def display_label(a, ctx):
     return ""
 
 
+def coordinator_name(a, ctx):
+    """Pure. Name of a coordinator row: display_label priority without the
+    terminal title: manual pane label (cleaned, not auto) > Herdr agent name >
+    repo (cwd basename) > agent kind. "" when none (coordinator_label -> "orch")."""
+    pane = ctx[1].get(a.get("pane_id"), {})
+    cwd = (a.get("foreground_cwd") or a.get("cwd") or "").rstrip("/")
+    manual = clean_label(pane.get("label")).strip()
+    if is_auto_label(manual, cwd):
+        manual = ""
+    for cand in (manual, a.get("name"), repo_of(cwd), a.get("agent")):
+        cand = (cand or "").strip()
+        if cand:
+            return cand[:TOKEN_MAX_LEN]
+    return ""
+
+
 def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     """Pure-ish. Separate display parts of one agent (per-token colors).
 
@@ -973,7 +989,7 @@ def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     label, sub/tree None.
     """
     rl = display_label(a, ctx)
-    coord = coordinator_label(rl) if is_coord else None
+    coord = coordinator_label(coordinator_name(a, ctx)) if is_coord else None
     if mark:
         return rl, None, None, mark.strip() or None, coord, None
     tab = (ctx[0].get(a.get("tab_id"), {}).get("label") or "").strip()
