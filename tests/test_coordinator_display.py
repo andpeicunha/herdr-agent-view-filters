@@ -1,4 +1,4 @@
-"""Coordenadora exibe sempre '◆ orchestrator'; filhas nunca usam o terminal_title
+"""Coordenadora exibe o nome real da pane; filhas nunca usam o terminal_title
 generico 'orchestrator' (label, senao basename do cwd); nome do grupo = tab."""
 import os
 import sys
@@ -12,7 +12,7 @@ from _support import Isolated, FakeHerdr, agent, pane, mocked  # noqa: E402
 
 TABS = [{"tab_id": "t1", "label": "plugins"}]
 NUM_TABS = [{"tab_id": "t1", "label": "1"}]
-COORD = "◆ orchestrator"
+COORD = "◆ agent-view-filters"
 
 
 def run(h, mode="picked"):
@@ -31,11 +31,15 @@ def fake(tabs=TABS, r_label="agent-view-filters", c_label=None, c_title="orchest
 
 
 class CoordinatorDisplay(Isolated):
-    def test_picked_sub_is_marker_orchestrator_despite_label(self):
+    def test_picked_coord_uses_root_pane_label(self):
         t = run(fake())
         self.assertEqual((t["R"]["subtree"], t["R"]["coord"]), ("├", COORD))
         self.assertIsNone(t["R"]["sub"])  # nome so em $coord
         self.assertIsNone(t["C"]["coord"])
+
+    def test_renamed_root_uses_the_same_name_in_sidebar(self):
+        t = run(fake(r_label="orch"))
+        self.assertEqual(t["R"]["coord"], "◆ orch")
 
     def test_other_modes_row_shows_orchestrator_when_title_falls_to_label(self):
         # tab numerica -> o titulo da raiz cai no display label

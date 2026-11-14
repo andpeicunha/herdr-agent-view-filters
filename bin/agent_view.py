@@ -14,7 +14,7 @@ view and keeps Herdr's native priority order.
 
 Tree marks are separate tokens (own color) published only in `picked` mode:
 `$tree` = "├" / "└" on a child (first row), `$subtree` = "├" on a root with
-children (second row); `$coord` = "◆ orchestrator" is published on
+children (second row); `$coord` = "◆ <root pane name>" is published on
 coordinator rows in every mode (title/sub hold names only). active / space / all publish flat rows: title = tab
 (display label when the tab label is empty/numeric), space = workspace, sub
 absent.
@@ -115,7 +115,12 @@ _config_cache = None
 CLOSED_COORD_MAX = 20       # closed_coordinators kept in state
 COORD_REFRESH_S = 3600      # rewrite a coordinator's last_seen at most this often
 ROLE_COORDINATOR = "coordinator"
-COORD_LABEL = "\u25c6 orchestrator"  # coordinator row text (marker + fixed name)
+COORD_MARK = "\u25c6"
+
+
+def coordinator_label(name):
+    """Show the root pane's real display name, with a short fallback."""
+    return f"{COORD_MARK} {name or 'orch'}"
 GENERIC_TITLE = "orchestrator"      # agent-a profile title: useless as child name
 SUBAGENT_TTL_S = 60 * 60    # a subagent entry older than this is stale (ignored)
 TOKEN_REFRESH_S = 6 * 3600  # force a token republish this often (TTL is 24h)
@@ -573,7 +578,7 @@ def group_marks(seq, tree):
 def row_tokens(title, space, sub, tree=None, coord=None, subtree=None):
     """Pure. Layout D display tokens, truncated; None/empty -> None (absent).
     `tree` = bare child mark ("├"/"└", first row), `subtree` = "├" of a root with
-    children (second row), `coord` = COORD_LABEL (coordinator only).
+    children (second row), `coord` = root pane display name with a mark.
     `group`, `group_space` and `item` are legacy tokens, always cleared."""
     out = {k: ((v or "")[:TOKEN_MAX_LEN] or None)
            for k, v in (("title", title), ("space", space), ("sub", sub),
@@ -957,7 +962,8 @@ def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     -> (title, space, sub, tree, coord, subtree). `tree` is the bare child mark
     ("├"/"└", no trailing space, first row) and `subtree` the "├" of a root with
     children (second row, next to `sub`/`coord`); None elsewhere. Two tokens
-    because the row layout is per token, not per agent. `coord` is COORD_LABEL on a coordinator row (None
+    because the row layout is per token, not per agent. `coord` is the root pane
+    display name with a mark on a coordinator row (None
     elsewhere) and title/sub never repeat it: they hold names only.
     child (mark): title = display label, tree = mark char.
     root with children (has_children): title = tab label (empty/numeric ->
@@ -967,7 +973,7 @@ def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     label, sub/tree None.
     """
     rl = display_label(a, ctx)
-    coord = COORD_LABEL if is_coord else None
+    coord = coordinator_label(rl) if is_coord else None
     if mark:
         return rl, None, None, mark.strip() or None, coord, None
     tab = (ctx[0].get(a.get("tab_id"), {}).get("label") or "").strip()
@@ -980,7 +986,7 @@ def row_parts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
 
 def row_texts(a, ctx, ws_labels, mark=None, has_children=False, is_coord=False):
     """Pure-ish. Single-text form of row_parts (picker): marks and the
-    COORD_LABEL are glued back into title/sub -> (title, space, sub).
+    coordinator label are glued back into title/sub -> (title, space, sub).
 
     Herdr indents every row after the first of an agent, so a root with
     children carries its label in the second row (`sub` = "├ " + label).
@@ -1056,7 +1062,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     workspace label, sub = display label, subtree = "├"; child -> title = display
     label, tree = "├" / "└" (last child); standalone -> title = tab label, space =
     workspace label. In every other mode the rows are flat (title = tab,
-    space = workspace; sub, tree and subtree absent). `coord` = "◆ orchestrator"
+    space = workspace; sub, tree and subtree absent). `coord` = "◆ <root pane name>"
     is published on coordinator rows in EVERY mode; title/sub hold names only
     (sub is absent on a coordinator, the name lives in `coord`). The old
     `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are

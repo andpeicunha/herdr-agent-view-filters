@@ -53,7 +53,7 @@ class TreeMarksOnlyInPicked(Isolated):
         tok = publish("picked")
         self.assertEqual(tok["R"]["subtree"], "\u251c")
         self.assertIsNone(tok["R"]["tree"])
-        self.assertEqual(tok["R"]["coord"], "\u25c6 orchestrator")  # coordenadora: COORD_LABEL
+        self.assertEqual(tok["R"]["coord"], "\u25c6 R")
         self.assertIsNone(tok["R"]["sub"])
         self.assertEqual(tok["C"]["tree"], "\u2514")
         self.assertEqual(tok["C"]["title"], "logs")
@@ -109,7 +109,7 @@ class TreeCoordLifecycle(Isolated):
         agents = [agent("R", "t1", "w1"), agent("C", "t1", "w1")]
         panes = [pane("R", "t1", "w1"), pane("C", "t1", "w1", parent="R", label="logs")]
         h1 = run_publish(agents, panes)
-        self.assertEqual(h1.tokens()["R"]["coord"], "\u25c6 orchestrator")
+        self.assertEqual(h1.tokens()["R"]["coord"], "\u25c6 R")
         feed_back(panes, h1)
         # R sem filhos: deixa de ser coordenadora
         agents, panes = [agent("R", "t1", "w1")], [pane("R", "t1", "w1")]

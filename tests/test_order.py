@@ -108,7 +108,7 @@ class PublishOrderTokens(Isolated):
                          ("dev", "Work", None))
         # R tem filho explícito: sub "├ repo"; C é o único filho -> "└ "
         self.assertEqual((t["R"]["title"], t["R"]["sub"], t["R"]["subtree"], t["R"]["coord"]),
-                         ("dev", None, "├", "◆ orchestrator"))
+                         ("dev", None, "├", "◆ R"))
         self.assertEqual((t["C"]["title"], t["C"]["space"], t["C"]["sub"], t["C"]["tree"]),
                          ("logs", None, None, "└"))
         self.assertTrue(all(v["tree_ws"] is None for v in t.values()))

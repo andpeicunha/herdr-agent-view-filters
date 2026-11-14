@@ -1,4 +1,4 @@
-"""herdr-plugin.toml: versão 0.10.0 e eventos de sync (sem pane.updated)."""
+"""herdr-plugin.toml: versão 0.10.1 e eventos de sync (sem pane.updated)."""
 import os
 import tomllib
 import unittest
@@ -17,7 +17,7 @@ class Manifest(unittest.TestCase):
         self.events = {e["on"]: e for e in self.m["events"]}
 
     def test_version(self):
-        self.assertEqual(self.m["version"], "0.10.0")
+        self.assertEqual(self.m["version"], "0.10.1")
 
     def test_new_sync_events_registered(self):
         for on in ("workspace.moved", "workspace.reordered", "tab.moved", "pane.moved"):

@@ -25,6 +25,29 @@ herdr plugin install andpeicunha/herdr-agent-view-filters
 
 ## Usage
 
+### Name a task on demand
+
+The picked group's title is the root pane's tab label. Use the installed
+`herdr-agent-names` launcher to preview and then apply a name change:
+
+```sh
+herdr-agent-names set --pane <pane-id> --group "reserva-de-aulas" --pane-label "frontend"
+herdr-agent-names set --pane <pane-id> --group "reserva-de-aulas" --pane-label "frontend" --apply
+```
+
+`--pane` defaults to `HERDR_PANE_ID` inside Herdr. `--group` follows the pane's
+current parent/group and renames its root tab, even when the child is in another
+tab. `--tab` renames the target pane's own tab; `--pane-label` renames only that
+pane. All supplied names are normalized to lowercase kebab-case before preview
+and apply. The command never changes agent identities. It never changes names during
+ordinary filter syncs. The launcher is installed by `dotfiles` `make install-herdr`
+and resolves this plugin's current installation, so an update does not break it.
+
+The Claude pane spawn script in `dotfiles` already names the agent and pane with
+`--name`. It accepts `--group-name` when a new task should also name the root
+tab. Existing manual tab and pane names are changed only by an explicit naming
+command or an explicit `--group-name` at spawn.
+
 Bind the `cycle` and `pick` actions in `~/.config/herdr/config.toml`:
 
 ```toml
@@ -70,7 +93,7 @@ How: the view sort is `[{token: space_rank}, {token: order}, pane_order]` (all a
 - `title` / `space` / `sub` = sidebar display texts, names only (see "Sidebar layout")
 - `tree` = `├` / `└` on a child (`picked` only)
 - `subtree` = `├` on a root with children (`picked` only, second row)
-- `coord` = `◆ orchestrator` on a coordinator row (every mode)
+- `coord` = `◆ <root pane name>` on a coordinator row (every mode)
 - `role` = `coordinator` on a coordinator root (every mode)
 - the old `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
   reported as `null` (cleared)
@@ -282,15 +305,16 @@ own color. Names are never glued to marks in the token values:
   tokens has a value.
 - `$tree`: `├` / `└` on a child (`└` for the last child), first row. `picked` only.
 - `$subtree`: `├` on a root with children, second row. `picked` only.
-- `$coord`: `◆ orchestrator` on a coordinator row, in every mode. The coordinator
-  name lives only in `$coord`; its `$sub` is absent.
+- `$coord`: `◆ <root pane name>` on a coordinator row, in every mode. It follows
+  the pane's actual display label (`◆ orch` when the label is `orch`); its `$sub`
+  is absent. A nameless root falls back to `◆ orch`.
 
 Per pane, `picked`:
 
 | pane (`picked`) | `$tree` | `$title` | `$space` | `$subtree` | `$sub` | `$coord` |
 | --- | --- | --- | --- | --- | --- | --- |
 | root with children | absent | tab label | workspace label | `├` | display label | absent |
-| coordinator root | absent | tab label | workspace label | `├` | absent | `◆ orchestrator` |
+| coordinator root | absent | tab label | workspace label | `├` | absent | `◆ <root pane name>` |
 | child | `├` / `└` (last child) | display label | absent | absent | absent | absent |
 | standalone | absent | tab label | workspace label | absent | absent | absent |
 
@@ -327,7 +351,7 @@ plugin is active, so the layout below uses the custom tokens only.
 [ui.sidebar.agents]
 # $title / $space / $sub / $tree / $subtree / $coord come from the agent-view-filters
 # plugin (one token per color). $tree = child mark (row 1), $subtree = root mark
-# (row 2), $coord = "◆ orchestrator" (coordinator only). Herdr joins adjacent
+# (row 2), $coord = "◆ <root pane name>" (coordinator only). Herdr joins adjacent
 # values with " · " (no glue option) and drops missing tokens with their separator.
 # No token fallback syntax, so native `tab` / `workspace` are not added (they would
 # duplicate the names); rows stay icon-only until the plugin's first sync.
@@ -357,7 +381,7 @@ Claude Code (`~/.claude/settings.json`):
 
 ```json
 {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command",
-  "command": "python3 /path/to/bin/name_hint.py", "timeout": 5}]}]}}
+  "command": "\"$HOME/.local/bin/herdr-agent-names\" hint", "timeout": 5}]}]}}
 ```
 
 ## Manual testing

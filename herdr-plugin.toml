@@ -1,6 +1,6 @@
 id = "andpeicunha.agent-view-filters"
 name = "agent-view-filters"
-version = "0.10.0"
+version = "0.10.1"
 min_herdr_version = "0.9.5"
 platforms = ["macos", "linux"]
 description = "Cycle the Agents sidebar between active (working/blocked), current-space, picked (exclusion list from a popup) and all agents."
@@ -46,6 +46,12 @@ id = "cycle"
 title = "agent view: cycle active -> space -> picked -> all"
 contexts = ["global"]
 command = ["bash", "run.sh", "cycle"]
+
+[[actions]]
+id = "sync"
+title = "agent view: refresh names and grouping"
+contexts = ["global"]
+command = ["bash", "run.sh", "sync"]
 
 [[events]]
 on = "workspace.focused"

@@ -206,7 +206,7 @@ class EmptyRepoSub(Isolated):
         self.assertIsNone(av.row_tokens("dev", "Work", "")["sub"])
 
     def test_publish_sends_sub_null_for_root_without_repo(self):
-        # R com filho = coordenadora -> subtree "├" + coord "◆ orchestrator" mesmo sem repo (sub None).
+        # R com filho = coordenadora -> subtree "├" + coord "◆ orch" mesmo sem nome (sub None).
         # Z sem filhos (outra tab) = raiz comum -> sub None.
         agents = [{"pane_id": "R", "tab_id": "t1", "workspace_id": "w1", "agent": "",
                    "cwd": "", "agent_status": "idle"},
@@ -221,7 +221,7 @@ class EmptyRepoSub(Isolated):
         self.assertIsNone(h.tokens()["R"]["sub"])
         self.assertEqual(h.tokens()["R"]["subtree"], "\u251c")
         self.assertIsNone(h.tokens()["R"]["tree"])
-        self.assertEqual(h.tokens()["R"]["coord"], "\u25c6 orchestrator")
+        self.assertEqual(h.tokens()["R"]["coord"], "\u25c6 orch")
         self.assertEqual(h.tokens()["R"]["title"], "dev")
         self.assertIsNone(h.tokens()["Z"]["sub"])
         self.assertIsNone(h.tokens()["Z"]["tree"])
