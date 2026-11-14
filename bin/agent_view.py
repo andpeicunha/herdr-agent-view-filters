@@ -19,6 +19,11 @@ coordinator rows in every mode (title/sub hold names only). active / space / all
 (display label when the tab label is empty/numeric), space = workspace, sub
 absent.
 
+Names: sync never touches tab names. Its one explicit opt-out exception: a
+coordinator pane is renamed ONCE (`herdr pane rename`) to config
+`coordinator_label` (default "orch"; "" disables), then recorded in
+`renamed_coordinators` so a later manual rename is never reverted.
+
 Grouping: a pane with a live `parent` token is a child of that parent (flattened
 to the root; the parent may live in another tab/space). Otherwise, with config
 `group_by_tab` (default true), the agent panes of one tab are grouped: the root
@@ -44,7 +49,7 @@ OR tab excluded OR root excluded; children follow their root.
 
 State ($HERDR_PLUGIN_STATE_DIR/state.json): `mode`, `excluded`, `seen`,
 `first_seen`, `tab_roots`, `parents`, `published_at` (epoch of the last full
-token publish). Unknown / old keys (`order`, `space_order`) are dropped; all but
+token publish), `renamed_coordinators` (pane ids already auto-renamed). Unknown / old keys (`order`, `space_order`) are dropped; all but
 `mode` / `excluded` are optional.
 """
 import contextlib
@@ -173,17 +178,20 @@ def read_state():
 
 def write_state(mode, excluded, seen=None, first_seen=None, tab_roots=None,
                 parents=None, published_at=None, coordinators=None,
-                closed_coordinators=None):
+                closed_coordinators=None, renamed_coordinators=None):
     """Atomic write under state_lock. seen/first_seen/tab_roots/parents/
-    published_at/coordinators/closed_coordinators=None keep the stored value
-    ({} / [] clear the last two). Old keys (order...) are dropped."""
+    published_at/coordinators/closed_coordinators/renamed_coordinators=None keep
+    the stored value ({} / [] clear the last three). Old keys (order...) are
+    dropped."""
     with state_lock():
         _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
-                     published_at, coordinators, closed_coordinators)
+                     published_at, coordinators, closed_coordinators,
+                     renamed_coordinators)
 
 
 def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
-                 published_at=None, coordinators=None, closed_coordinators=None):
+                 published_at=None, coordinators=None, closed_coordinators=None,
+                 renamed_coordinators=None):
     global _state_cache
     st = read_state()
     if seen is None:
@@ -200,6 +208,8 @@ def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
         coordinators = read_coordinators(st)
     if closed_coordinators is None:
         closed_coordinators = read_closed_coordinators(st)
+    if renamed_coordinators is None:
+        renamed_coordinators = read_renamed_coordinators(st)
     path = state_path()
     data = {"mode": mode, "excluded": sorted(set(excluded))}
     if isinstance(seen, list):  # absent key = "never initialised" (see apply_new_policy)
@@ -216,6 +226,8 @@ def _write_state(mode, excluded, seen, first_seen, tab_roots, parents,
         data["coordinators"] = coordinators
     if closed_coordinators:
         data["closed_coordinators"] = closed_coordinators
+    if renamed_coordinators:
+        data["renamed_coordinators"] = sorted(set(renamed_coordinators))
     fd, tmp = tempfile.mkstemp(dir=state_dir(), prefix="state.json.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -278,6 +290,14 @@ def read_closed_coordinators(st=None):
     return [v for v in d if isinstance(v, dict)][-CLOSED_COORD_MAX:]
 
 
+def read_renamed_coordinators(st=None):
+    """Stored `renamed_coordinators` (pane ids already auto-renamed); invalid/missing -> []."""
+    d = (read_state() if st is None else st).get("renamed_coordinators")
+    if not isinstance(d, list):
+        return []
+    return [v for v in d if isinstance(v, str)]
+
+
 def read_mode():
     m = read_state().get("mode")
     return m if m in MODES else "active"
@@ -331,6 +351,20 @@ def read_picked_new():
     """Config `picked_new`: "include" (default) | "exclude". Invalid/missing -> include."""
     v = read_config().get("picked_new")
     return v if v in NEW_POLICIES else "include"
+
+
+DEFAULT_COORD_LABEL = "orch"
+
+
+def read_coordinator_label():
+    """Config `coordinator_label`: pane name given once to a coordinator pane.
+    Missing / invalid type / longer than TOKEN_MAX_LEN -> "orch"; a string is
+    stripped and "" (empty) disables the rename."""
+    v = read_config().get("coordinator_label")
+    if not isinstance(v, str):
+        return DEFAULT_COORD_LABEL
+    v = v.strip()
+    return DEFAULT_COORD_LABEL if len(v) > TOKEN_MAX_LEN else v
 
 
 def read_group_by_tab():
@@ -1230,6 +1264,46 @@ def record_coordinators(snap, tree, now=None):
                         closed_coordinators=new_closed)
 
 
+def rename_coordinators(snap, tree):
+    """Explicit opt-out of the read-only-names rule: give each coordinator pane
+    the configured label (`coordinator_label`, default "orch") ONCE. A pane in
+    `renamed_coordinators` is never renamed again (a later manual rename sticks).
+    A pane already named the target is only marked. On success the snapshot
+    label is patched so the same sync shows it. Failures print one stderr line,
+    leave the pane unmarked (retried next sync) and never raise. Stale ids (panes
+    gone from pane.list) are pruned. "" disables the rename."""
+    panes = snap.get("panes")
+    if not panes:
+        return
+    target = read_coordinator_label()
+    with state_lock():
+        stored = read_renamed_coordinators()
+        by_pane = {p.get("pane_id"): p for p in panes}
+        done = {pid for pid in stored if pid in by_pane}
+        if target:
+            for pid in sorted(coordinator_ids(tree)):
+                p = by_pane.get(pid)
+                if p is None or pid in done:
+                    continue
+                if clean_label(p.get("label")) == target:
+                    done.add(pid)
+                    continue
+                try:
+                    subprocess.run(["herdr", "pane", "rename", pid, target],
+                                   check=True, capture_output=True, text=True,
+                                   timeout=5)
+                except (subprocess.CalledProcessError, OSError,
+                        subprocess.TimeoutExpired) as e:
+                    sys.stderr.write(
+                        f"agent-view-filters: pane rename {pid} failed: {e}\n")
+                    continue
+                p["label"] = target
+                done.add(pid)
+        if done != set(stored):
+            write_state(read_mode(), read_excluded(),
+                        renamed_coordinators=sorted(done))
+
+
 def prune_excluded(snap=None):
     """Drop excluded pane ids / spaces / tabs that no longer exist (a pane is
     dead only when absent from pane.list). Skips on listing failure."""
@@ -1280,6 +1354,7 @@ def _apply_mode(mode, excluded, snap):
         # Empty exclusion -> match-everything view, so the sort still applies.
         flt = {"op": "not", "filter": {"op": "in", "field": "pane_id",
                                        "values": eff or ["__none__"]}}
+    rename_coordinators(snap, tree)
     record_coordinators(snap, tree)
     publish_tokens(agents, tree=tree, snap=snap, mode=mode)
     if mode == "all":

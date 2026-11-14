@@ -3,7 +3,8 @@
 
 The picked group title comes from the root pane's tab label. This command
 changes real Herdr labels only when --apply is supplied; normal filter syncs
-remain read-only with respect to tab and pane names.
+remain read-only with respect to tab and pane names, except the explicit opt-out
+in agent_view.py that renames a coordinator pane once (`coordinator_label`).
 """
 
 import argparse

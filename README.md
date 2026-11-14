@@ -40,7 +40,8 @@ current parent/group and renames its root tab, even when the child is in another
 tab. `--tab` renames the target pane's own tab; `--pane-label` renames only that
 pane. All supplied names are normalized to lowercase kebab-case before preview
 and apply. The command never changes agent identities. It never changes names during
-ordinary filter syncs. The launcher is installed by `dotfiles` `make install-herdr`
+ordinary filter syncs, except the one-time coordinator rename (see Config
+`coordinator_label`). The launcher is installed by `dotfiles` `make install-herdr`
 and resolves this plugin's current installation, so an update does not break it.
 
 The Claude pane spawn script in `dotfiles` already names the agent and pane with
@@ -189,6 +190,7 @@ In `$HERDR_PLUGIN_CONFIG_DIR` (fallback
 ```toml
 picked_new   = "include"   # default; or "exclude"
 group_by_tab = true        # default; false = only parent tokens group
+coordinator_label = "orch" # default; "" = never rename coordinators
 ```
 
 - `picked_new = "include"`: new agents show up in `picked` automatically.
@@ -196,6 +198,13 @@ group_by_tab = true        # default; false = only parent tokens group
   (children are never auto-excluded). The first sync after upgrading marks all
   current agents as seen without excluding.
 - `group_by_tab`: see "Task grouping".
+- `coordinator_label`: when a pane becomes a coordinator, `sync` runs
+  `herdr pane rename <pane> <label>` once and records the pane in
+  `renamed_coordinators` (state), so the row shows `◆ <label>` in that same
+  sync. This is the one explicit exception to "syncs never change names". A
+  pane already named `<label>` is only recorded. A pane is never renamed again,
+  so a manual rename is kept. A failed rename is retried on the next sync.
+  `""` disables it; an invalid type or a value over 128 characters uses `orch`.
 - Needs Python 3.11+ (`tomllib`); otherwise the defaults are used.
 
 `state.json` lives in `$HERDR_PLUGIN_STATE_DIR`; when unset it falls back to

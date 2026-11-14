@@ -1,6 +1,7 @@
 """Helpers compartilhados pelos testes. Único mock: `av.send` (socket Herdr)."""
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -75,10 +76,27 @@ def mocked(herdr):
     return mock.patch.object(av, "send", side_effect=herdr)
 
 
+_REAL_RUN = subprocess.run
+
+
 class Isolated(unittest.TestCase):
-    """STATE e CONFIG em tmp: nunca toca state.json real nem config do usuário."""
+    """STATE e CONFIG em tmp: nunca toca state.json real nem config do usuário.
+    `herdr pane rename` (renome único de coordinator) é interceptado em
+    `self.rename_run` (falha por padrão, ver setUp); qualquer outro subprocess.run segue o real."""
 
     def setUp(self):
+        # Default: herdr "missing" (rename fails, pane stays unmarked/unchanged),
+        # so tests unrelated to the rename keep their original labels/tokens.
+        self.rename_run = mock.Mock(side_effect=FileNotFoundError("herdr"))
+
+        def run(argv, *a, **kw):
+            if list(argv[:3]) == ["herdr", "pane", "rename"]:
+                return self.rename_run(argv, *a, **kw)
+            return _REAL_RUN(argv, *a, **kw)
+
+        patcher = mock.patch.object(av.subprocess, "run", side_effect=run)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.state_dir = tempfile.mkdtemp()
         self.config_dir = tempfile.mkdtemp()
         self._old = {k: os.environ.get(k)
