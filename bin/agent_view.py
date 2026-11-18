@@ -357,6 +357,25 @@ def read_picked_new():
     return v if v in NEW_POLICIES else "include"
 
 
+def read_cycle_modes():
+    """Config `cycle_modes`: modes visited by `cycle`, in MODES order (e.g.
+    ["picked", "all"]). Unknown entries are dropped; missing/empty -> MODES."""
+    v = read_config().get("cycle_modes")
+    if not isinstance(v, list):
+        return MODES
+    return [m for m in MODES if m in v] or MODES
+
+
+def next_mode(current, modes):
+    """Pure. Next mode of `modes` after `current` (wraps). A `current` outside
+    `modes` goes to the first mode after it in MODES order that is in `modes`."""
+    i = MODES.index(current) if current in MODES else -1
+    for m in MODES[i + 1:] + MODES[:i + 1]:
+        if m in modes:
+            return m
+    return modes[0]
+
+
 DEFAULT_COORD_LABEL = "orch"
 
 
@@ -1489,7 +1508,7 @@ def main():
 
     with state_lock():
         if action == "cycle":
-            mode = MODES[(MODES.index(read_mode()) + 1) % len(MODES)]
+            mode = next_mode(read_mode(), read_cycle_modes())
         else:
             mode = action
         snap = take_snapshot()

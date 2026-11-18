@@ -193,6 +193,7 @@ In `$HERDR_PLUGIN_CONFIG_DIR` (fallback
 picked_new   = "include"   # default; or "exclude"
 group_by_tab = true        # default; false = only parent tokens group
 coordinator_label = "orch" # default; "" = never rename coordinators
+cycle_modes  = ["active", "space", "picked", "all"]  # default; e.g. ["picked", "all"]
 ```
 
 - `picked_new = "include"`: new agents show up in `picked` automatically.
