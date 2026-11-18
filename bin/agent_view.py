@@ -100,6 +100,10 @@ TOKEN_MAX_LEN = 128
 CHILD_PREFIX = "\u2514 "  # "└ " (last child)
 MID_PREFIX = "\u251c "  # "├ " (root with children / non-last child)
 TAB_PREFIX = "tab:"
+# `$sep` closes a space block (own row in the sidebar). Only in modes sorted by
+# space: `space` shows one space and `all` uses Herdr's native order.
+SEP_LINE = "─" * 15  # "───────────────"
+SEP_MODES = ("picked", "active")
 FIRST_SEEN_BASE = 10 ** 9  # rank of panes without a stored first_seen
 STATE_SUBDIR = "~/.local/state/herdr/plugins/andpeicunha.agent-view-filters"
 
@@ -650,6 +654,16 @@ def space_sequence(panes, parent_of=None):
     return seq
 
 
+def space_separators(seq, space_key):
+    """Pure. Last pane_id of every space in `seq` except the last space: the
+    rows that carry the `$sep` line closing their space block."""
+    out = set()
+    for prev, nxt in zip(seq, seq[1:]):
+        if space_key.get(prev) != space_key.get(nxt):
+            out.add(prev)
+    return out
+
+
 def order_indices(seq, space_of):
     """Pure. pane_id -> index inside its own space, following `seq`."""
     counters = {}
@@ -1145,6 +1159,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     rank = {}
     for pid in seq:
         rank.setdefault(space_key[pid], len(rank))
+    seps = space_separators(seq, space_key) if mode in SEP_MODES else set()
     current = {p.get("pane_id"): p.get("tokens") for p in panes}
     now = time.time()
     force = now - read_published_at() > TOKEN_REFRESH_S
@@ -1163,6 +1178,7 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
             "name": None,
             "tree_ws": None,
             "role": ROLE_COORDINATOR if pane_id in coords else None,
+            "sep": SEP_LINE if pane_id in seps else None,
             **row_tokens(title, space, sub, tree_mark, coord, subtree),
         }
         if not force and _tokens_current(current.get(pane_id), tokens):

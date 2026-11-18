@@ -95,6 +95,8 @@ How: the view sort is `[{token: space_rank}, {token: order}, pane_order]` (all a
 - `tree` = `├` / `└` on a child (`picked` only)
 - `subtree` = `├` on a root with children (`picked` only, second row)
 - `coord` = `◆ <root pane name>` on a coordinator row (every mode)
+- `sep` = `───` line on the last agent of each space except the last one
+  (`picked` / `active` only; own row, closes the space block)
 - `role` = `coordinator` on a coordinator root (every mode)
 - the old `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
   reported as `null` (cleared)
@@ -368,6 +370,7 @@ row_gap = 0
 rows = [
   ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }, { token = "$space", fg = "#6272a4" }],
   [{ token = "$subtree", fg = "#555a66" }, { token = "$sub", fg = "#f8f8f2" }, { token = "$coord", fg = "#bd93f9", bold = true }],
+  [{ token = "$sep", fg = "#44475a" }],
 ]
 ```
 
