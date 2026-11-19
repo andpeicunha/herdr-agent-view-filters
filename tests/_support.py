@@ -38,8 +38,13 @@ def pane(pid, tab, ws="w1", parent=None, label=None):
     }
 
 
+HERDR_MAX_TOKENS = 16  # limite real do Herdr por pane.report_metadata (independente de av.MAX_TOKENS)
+
+
 class FakeHerdr:
-    """Respostas fixas do socket Herdr. Grava todas as requisições."""
+    """Respostas fixas do socket Herdr. Grava todas as requisições.
+    pane.report_metadata com mais de HERDR_MAX_TOKENS tokens é recusado
+    (invalid_metadata_token) e não fica armazenado, como no Herdr real."""
 
     def __init__(self, agents=(), panes=(), tabs=(), workspaces=WORKSPACES):
         self.agents = list(agents)
@@ -47,6 +52,7 @@ class FakeHerdr:
         self.tabs = list(tabs)
         self.workspaces = list(workspaces)
         self.calls = []
+        self.landed = {}  # pane_id -> tokens do último report aceito
 
     def __call__(self, req, timeout=None):  # mesma assinatura de av.send(req, timeout)
         self.calls.append(req)
@@ -59,16 +65,27 @@ class FakeHerdr:
             return json.dumps({"result": {"tabs": self.tabs}})
         if m == "workspace.list":
             return json.dumps({"result": {"workspaces": self.workspaces}})
-        if m in ("pane.report_metadata", "agent.view.set", "agent.view.clear"):
+        if m == "pane.report_metadata":
+            return json.dumps(self._report_metadata(req["params"]))
+        if m in ("agent.view.set", "agent.view.clear"):
             return json.dumps({"result": {}})
         raise AssertionError(f"método inesperado: {m}")
+
+    def _report_metadata(self, params):
+        tokens = params.get("tokens") or {}
+        if len(tokens) > HERDR_MAX_TOKENS:
+            return {"error": {"code": "invalid_metadata_token",
+                              "message": f"a metadata report may update at most "
+                                         f"{HERDR_MAX_TOKENS} tokens"}}
+        self.landed[params["pane_id"]] = dict(tokens)
+        return {"result": {}}
 
     def methods(self, name):
         return [c["params"] for c in self.calls if c["method"] == name]
 
     def tokens(self):
-        """pane_id -> tokens publicados por pane.report_metadata."""
-        return {p["pane_id"]: p["tokens"] for p in self.methods("pane.report_metadata")}
+        """pane_id -> tokens aceitos pelo Herdr (último report aceito por pane)."""
+        return {pid: dict(t) for pid, t in self.landed.items()}
 
 
 def mocked(herdr):

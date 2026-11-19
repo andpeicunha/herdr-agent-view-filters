@@ -95,11 +95,14 @@ How: the view sort is `[{token: space_rank}, {token: order}, pane_order]` (all a
 - `tree` = `├` / `└` on a child (`picked` only)
 - `subtree` = `├` on a root with children (`picked` only, second row)
 - `coord` = `◆ <root pane name>` on a coordinator row (every mode)
-- `sep` = `───` line on the last agent of each space except the last one
-  (`picked` / `active` only; own row, closes the space block)
+- `sep` = `─` x 28 and `hdr` = the NEXT space's plain name, both on the LAST agent
+  of every space except the last one (`picked` / `active` only; `space_headers()`).
+  Every other agent gets both as `null`. The retired `pad` token is published as
+  `null` so a stale value clears
 - `role` = `coordinator` on a coordinator root (every mode)
-- the old `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
-  reported as `null` (cleared)
+- the old `group`, `group_space` and `item` tokens are reported as `null` (cleared);
+  `tree_ws`, `repo` and `name` are no longer published (herdr allows at most 16
+  tokens per report)
 
 Saved `order` / `space_order` in an old state.json are ignored. A pane whose
 tokens are already up to date is not rewritten (a full republish happens at
@@ -361,17 +364,21 @@ plugin is active, so the layout below uses the custom tokens only.
 
 ```toml
 [ui.sidebar.agents]
-# $title / $space / $sub / $tree / $subtree / $coord come from the agent-view-filters
-# plugin (one token per color). $tree = child mark (row 1), $subtree = root mark
-# (row 2), $coord = "◆ <root pane name>" (coordinator only). Herdr joins adjacent
-# values with " · " (no glue option) and drops missing tokens with their separator.
-# No token fallback syntax, so native `tab` / `workspace` are not added (they would
-# duplicate the names); rows stay icon-only until the plugin's first sync.
+# $title / $sub / $tree / $subtree / $coord / $sep / $hdr come from the agent-view-filters
+# plugin (one token per color). $sep = "─" line and $hdr = next space's name, on the
+# last agent of each space (except the last space): they sit below that group.
+# Every row after the first is indented 2 cols by Herdr, so titles line up.
+# $tree = child mark, $subtree = root mark, $coord = "◆ <root pane name>"
+# (coordinator only). Herdr joins adjacent values with " · " (no glue option) and
+# drops missing tokens with their separator. No token fallback syntax, so native
+# `tab` / `workspace` are not added (they would duplicate the names); rows stay
+# icon-only until the plugin's first sync.
 row_gap = 0
 rows = [
-  ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }, { token = "$space", fg = "#6272a4" }],
+  ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }],
   [{ token = "$subtree", fg = "#555a66" }, { token = "$sub", fg = "#f8f8f2" }, { token = "$coord", fg = "#bd93f9", bold = true }],
   [{ token = "$sep", fg = "#44475a" }],
+  [{ token = "$hdr", fg = "#6272a4", bold = true }],
 ]
 ```
 

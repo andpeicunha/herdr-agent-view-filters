@@ -97,7 +97,7 @@ class PublishOrderTokens(Isolated):
             "A": ("ops", "Work", None),
             "S": ("home", "Home", None),
         })
-        self.assertTrue(all(v["tree_ws"] is None for v in t.values()))
+        self.assertTrue(all("tree_ws" not in v for v in t.values()))
 
     def test_group_by_tab_off_only_explicit_children_move(self):
         _, t = self.scenario(False)
@@ -111,7 +111,7 @@ class PublishOrderTokens(Isolated):
                          ("dev", None, "├", "◆ R"))
         self.assertEqual((t["C"]["title"], t["C"]["space"], t["C"]["sub"], t["C"]["tree"]),
                          ("logs", None, None, "└"))
-        self.assertTrue(all(v["tree_ws"] is None for v in t.values()))
+        self.assertTrue(all("tree_ws" not in v for v in t.values()))
 
 
 class ApplyModeSort(Isolated):

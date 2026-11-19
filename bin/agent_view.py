@@ -97,12 +97,15 @@ SORT = [
 
 TOKEN_TTL_MS = 86400000  # server max (24h); renewed on every sync
 TOKEN_MAX_LEN = 128
+MAX_TOKENS = 16  # herdr rejects a pane.report_metadata with more tokens
 CHILD_PREFIX = "\u2514 "  # "└ " (last child)
 MID_PREFIX = "\u251c "  # "├ " (root with children / non-last child)
 TAB_PREFIX = "tab:"
-# `$sep` closes a space block (own row in the sidebar). Only in modes sorted by
-# space: `space` shows one space and `all` uses Herdr's native order.
-SEP_LINE = "─" * 15  # "───────────────"
+# `$sep` / `$hdr` are published on the LAST pane of each space except the last one
+# (see space_headers): `$sep` = a line of "─" (HDR_WIDTH), `$hdr` = the NEXT space's
+# name, so the next space's header sits between the two groups. Only in modes sorted
+# by space: `space` shows one space and `all` uses Herdr's native order.
+HDR_WIDTH = 28
 SEP_MODES = ("picked", "active")
 FIRST_SEEN_BASE = 10 ** 9  # rank of panes without a stored first_seen
 STATE_SUBDIR = "~/.local/state/herdr/plugins/andpeicunha.agent-view-filters"
@@ -673,13 +676,17 @@ def space_sequence(panes, parent_of=None):
     return seq
 
 
-def space_separators(seq, space_key):
-    """Pure. Last pane_id of every space in `seq` except the last space: the
-    rows that carry the `$sep` line closing their space block."""
-    out = set()
-    for prev, nxt in zip(seq, seq[1:]):
-        if space_key.get(prev) != space_key.get(nxt):
-            out.add(prev)
+def space_headers(seq, space_key):
+    """Pure. {last pane_id of space i: space_key of space i+1} for every space in
+    `seq` except the last one. Spaces are contiguous in `seq`. The mapped key is
+    the separator target: its `$sep` line and `$hdr` name go on that pane."""
+    out = {}
+    last = None  # (pane_id, key) of the previous pane
+    for pid in seq:
+        k = space_key.get(pid)
+        if last is not None and k != last[1]:
+            out[last[0]] = k
+        last = (pid, k)
     return out
 
 
@@ -1147,9 +1154,14 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     workspace label. In every other mode the rows are flat (title = tab,
     space = workspace; sub, tree and subtree absent). `coord` = "◆ <root pane name>"
     is published on coordinator rows in EVERY mode; title/sub hold names only
-    (sub is absent on a coordinator, the name lives in `coord`). The old
-    `tree_ws`, `group`, `group_space`, `item`, `repo` and `name` tokens are
-    cleared. Coordinator roots (final roots of `tree` with >=1 child: `parent`
+    (sub is absent on a coordinator, the name lives in `coord`). `sep` / `hdr`
+    (picked and active only) = "─" * HDR_WIDTH line and the NEXT space's plain
+    name, on the last pane of every space except the last (see space_headers);
+    None elsewhere. The retired `pad` token is still published as None so a
+    stale value is cleared. The old `group`, `group_space` and `item` tokens are
+    cleared; `tree_ws`, `repo` and `name` are no longer published (herdr caps a
+    report at MAX_TOKENS: 15 keys here).
+    Coordinator roots (final roots of `tree` with >=1 child: `parent`
     target or tab root with children) carry `role=coordinator` in EVERY mode;
     the token is cleared once the pane has no children.
     Best effort: a failing/dead pane is skipped, never raised. A pane whose
@@ -1178,11 +1190,12 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     rank = {}
     for pid in seq:
         rank.setdefault(space_key[pid], len(rank))
-    seps = space_separators(seq, space_key) if mode in SEP_MODES else set()
+    seps = space_headers(seq, space_key) if mode in SEP_MODES else {}
     current = {p.get("pane_id"): p.get("tokens") for p in panes}
     now = time.time()
     force = now - read_published_at() > TOKEN_REFRESH_S
     n = 0
+    warned_size = warned_err = False
     for a in agents:
         pane_id = a.get("pane_id")
         if not pane_id:
@@ -1193,13 +1206,17 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         tokens = {
             "space_rank": f"{rank[space_key[pane_id]]:04d}" if pane_id in space_key else None,
             "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
-            "repo": None,
-            "name": None,
-            "tree_ws": None,
             "role": ROLE_COORDINATOR if pane_id in coords else None,
-            "sep": SEP_LINE if pane_id in seps else None,
+            "sep": "─" * HDR_WIDTH if pane_id in seps else None,
+            "hdr": (((ws_labels.get(seps[pane_id][1]) or "").strip() or None)
+                    if pane_id in seps else None),
+            "pad": None,  # retired token, published empty so stale values clear
             **row_tokens(title, space, sub, tree_mark, coord, subtree),
         }
+        if len(tokens) > MAX_TOKENS and not warned_size:
+            warned_size = True
+            sys.stderr.write("agent-view-filters: token report exceeds herdr limit "
+                             f"({len(tokens)}>{MAX_TOKENS})\n")
         if not force and _tokens_current(current.get(pane_id), tokens):
             n += 1
             continue
@@ -1216,6 +1233,12 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
             }))
             if "error" not in resp:
                 n += 1
+            elif not warned_err:
+                warned_err = True
+                err = resp.get("error")
+                code, msg = (err.get("code"), err.get("message")) if isinstance(err, dict) else (err, None)
+                sys.stderr.write(f"agent-view-filters: pane.report_metadata failed: "
+                                 f"{code} {msg or ''}".rstrip() + "\n")
         except (ValueError, OSError):
             continue
     if force and n:
