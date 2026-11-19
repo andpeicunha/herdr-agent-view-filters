@@ -36,7 +36,8 @@ class FakeHerdrEnforcesLimit(unittest.TestCase):
 class PublishFitsHerdrLimit(Isolated):
     """Cenário com group_by_tab: duas spaces (Work=w1, Home=w2). Sequência de w1:
     R, C (filho de R), D (tab dev) e A (tab ops). O último pane de w1 é A, que
-    carrega sep + hdr "Home" (próximo space). S (último space) não recebe nada."""
+    carrega sep de SEP_WIDTH. R (primeiro de w1) carrega space "Work" e S (primeiro
+    de w2) carrega "Home". hdr é sempre None (token aposentado)."""
 
     def test_publish_reports_within_limit_and_tokens_land(self):
         self.write_config("group_by_tab = true\n")
@@ -60,11 +61,15 @@ class PublishFitsHerdrLimit(Isolated):
         self.assertEqual(n, len(agents))  # todos aceitos pelo Herdr fake
         landed = h.tokens()
         self.assertEqual(set(landed), {"A", "R", "C", "D", "S"})
-        # último pane de Work carrega o separador e o nome do PRÓXIMO space
-        self.assertEqual(landed["A"]["hdr"], "Home")
-        self.assertEqual(landed["A"]["sep"], "─" * 28)
-        # panes que não fecham space e o último space não recebem nada
+        # último pane de Work carrega o separador; hdr aposentado fica None
+        self.assertEqual(landed["A"]["sep"], "─" * 20)
+        self.assertTrue(all(v["hdr"] is None for v in landed.values()))
+        # só o primeiro pane de cada space carrega `space`
+        self.assertEqual(landed["R"]["space"], "Work")
+        self.assertEqual(landed["S"]["space"], "Home")
+        for pid in ("C", "D", "A"):
+            self.assertIsNone(landed[pid]["space"], pid)
+        # panes que não fecham space não carregam sep
         for pid in ("R", "C", "D", "S"):
-            self.assertIsNone(landed[pid]["hdr"], pid)
             self.assertIsNone(landed[pid]["sep"], pid)
         self.assertTrue(all(v["pad"] is None for v in landed.values()))

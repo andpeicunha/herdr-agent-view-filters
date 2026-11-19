@@ -101,11 +101,15 @@ MAX_TOKENS = 16  # herdr rejects a pane.report_metadata with more tokens
 CHILD_PREFIX = "\u2514 "  # "└ " (last child)
 MID_PREFIX = "\u251c "  # "├ " (root with children / non-last child)
 TAB_PREFIX = "tab:"
-# `$sep` / `$hdr` are published on the LAST pane of each space except the last one
-# (see space_headers): `$sep` = a line of "─" (HDR_WIDTH), `$hdr` = the NEXT space's
-# name, so the next space's header sits between the two groups. Only in modes sorted
-# by space: `space` shows one space and `all` uses Herdr's native order.
-HDR_WIDTH = 28
+# `$sep` is published on the LAST pane of each space except the last one (see
+# space_bounds): a line of "─" (SEP_WIDTH). `$space` is published only on the FIRST
+# pane of each space (in SEP_MODES), and it yields to the title when the sidebar
+# row is too narrow (see fit_space). `$hdr` is retired (always null). Only in modes
+# sorted by space: `space` shows one space and `all` uses Herdr's native order.
+SEP_WIDTH = 20
+SIDEBAR_WIDTH = 32          # columns of the Herdr agent row (config: sidebar_width)
+MIN_SPACE_ROOM = 6          # below this many columns `$space` is dropped
+TOKEN_SEP = " · "      # Herdr joins adjacent tokens of one row with this
 SEP_MODES = ("picked", "active")
 FIRST_SEEN_BASE = 10 ** 9  # rank of panes without a stored first_seen
 STATE_SUBDIR = "~/.local/state/herdr/plugins/andpeicunha.agent-view-filters"
@@ -399,6 +403,14 @@ def read_group_by_tab():
     return v if isinstance(v, bool) else True
 
 
+def read_sidebar_width():
+    """Config `sidebar_width` (columns, int >= 10). Invalid/missing -> SIDEBAR_WIDTH.
+    Must match the real width of the Herdr agent sidebar."""
+    v = read_config().get("sidebar_width")
+    ok = isinstance(v, int) and not isinstance(v, bool) and v >= 10
+    return v if ok else SIDEBAR_WIDTH
+
+
 def apply_new_policy(live, seen, excluded, policy, children=None, live_spaces=None,
                      tab_roots=None, live_tabs=None, alive=None):
     """Pure. Returns (seen, excluded) after handling never-seen agents.
@@ -676,18 +688,36 @@ def space_sequence(panes, parent_of=None):
     return seq
 
 
-def space_headers(seq, space_key):
-    """Pure. {last pane_id of space i: space_key of space i+1} for every space in
-    `seq` except the last one. Spaces are contiguous in `seq`. The mapped key is
-    the separator target: its `$sep` line and `$hdr` name go on that pane."""
-    out = {}
-    last = None  # (pane_id, key) of the previous pane
+def space_bounds(seq, space_key):
+    """Pure. -> (first, last): `first` = pane_ids that open a space in `seq`
+    (they carry `$space`), `last` = pane_ids that close a space except the final
+    one (they carry `$sep`). Spaces are contiguous in `seq`."""
+    first, last = set(), set()
+    prev = None  # (pane_id, space key) of the previous pane
     for pid in seq:
         k = space_key.get(pid)
-        if last is not None and k != last[1]:
-            out[last[0]] = k
-        last = (pid, k)
-    return out
+        if prev is None or k != prev[1]:
+            first.add(pid)
+            if prev is not None:
+                last.add(prev[0])
+        prev = (pid, k)
+    return first, last
+
+
+def fit_space(space, title, tree=None, width=SIDEBAR_WIDTH):
+    """Pure. `$space` text for a first row that must keep the title readable.
+    room = width - 2 (state icon + space) - tree mark (+ " · ") - title - " · ".
+    room < MIN_SPACE_ROOM -> None (the title wins). Longer than room -> room-1
+    chars + "…". The title itself is never shortened."""
+    if not space:
+        return None
+    tree_cost = len(tree) + len(TOKEN_SEP) if tree else 0
+    room = width - 2 - tree_cost - len(title or "") - len(TOKEN_SEP)
+    if room < MIN_SPACE_ROOM:
+        return None
+    if len(space) > room:
+        return space[:room - 1] + "…"
+    return space
 
 
 def order_indices(seq, space_of):
@@ -1154,13 +1184,15 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     workspace label. In every other mode the rows are flat (title = tab,
     space = workspace; sub, tree and subtree absent). `coord` = "◆ <root pane name>"
     is published on coordinator rows in EVERY mode; title/sub hold names only
-    (sub is absent on a coordinator, the name lives in `coord`). `sep` / `hdr`
-    (picked and active only) = "─" * HDR_WIDTH line and the NEXT space's plain
-    name, on the last pane of every space except the last (see space_headers);
-    None elsewhere. The retired `pad` token is still published as None so a
-    stale value is cleared. The old `group`, `group_space` and `item` tokens are
-    cleared; `tree_ws`, `repo` and `name` are no longer published (herdr caps a
-    report at MAX_TOKENS: 15 keys here).
+    (sub is absent on a coordinator, the name lives in `coord`).
+    In picked and active (SEP_MODES) `space` is published only on the FIRST pane
+    of each space and cut by fit_space() to leave room for the title (dropped when
+    the room is < MIN_SPACE_ROOM); the other panes get None. `sep` (SEP_MODES) =
+    "─" * SEP_WIDTH on the LAST pane of every space except the last (see
+    space_bounds); None elsewhere. The retired `hdr` and `pad` tokens are still
+    published as None so a stale value is cleared. The old `group`, `group_space`
+    and `item` tokens are cleared; `tree_ws`, `repo` and `name` are no longer
+    published (herdr caps a report at MAX_TOKENS: 15 keys here).
     Coordinator roots (final roots of `tree` with >=1 child: `parent`
     target or tab root with children) carry `role=coordinator` in EVERY mode;
     the token is cleared once the pane has no children.
@@ -1190,7 +1222,9 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
     rank = {}
     for pid in seq:
         rank.setdefault(space_key[pid], len(rank))
-    seps = space_headers(seq, space_key) if mode in SEP_MODES else {}
+    sep_mode = mode in SEP_MODES
+    firsts, lasts = space_bounds(seq, space_key) if sep_mode else (set(), set())
+    width = read_sidebar_width()
     current = {p.get("pane_id"): p.get("tokens") for p in panes}
     now = time.time()
     force = now - read_published_at() > TOKEN_REFRESH_S
@@ -1203,15 +1237,18 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         title, space, sub, tree_mark, coord, subtree = row_parts(
             a, ctx, ws_labels, marks.get(pane_id) if pane_id in tree else None,
             pane_id in parents, pane_id in coords)
+        row = row_tokens(title, space, sub, tree_mark, coord, subtree)
+        if sep_mode:
+            row["space"] = (fit_space(row["space"], row["title"], row["tree"], width)
+                            if pane_id in firsts else None)
         tokens = {
             "space_rank": f"{rank[space_key[pane_id]]:04d}" if pane_id in space_key else None,
             "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
             "role": ROLE_COORDINATOR if pane_id in coords else None,
-            "sep": "─" * HDR_WIDTH if pane_id in seps else None,
-            "hdr": (((ws_labels.get(seps[pane_id][1]) or "").strip() or None)
-                    if pane_id in seps else None),
+            "sep": "─" * SEP_WIDTH if sep_mode and pane_id in lasts else None,
+            "hdr": None,  # retired token, published empty so stale values clear
             "pad": None,  # retired token, published empty so stale values clear
-            **row_tokens(title, space, sub, tree_mark, coord, subtree),
+            **row,
         }
         if len(tokens) > MAX_TOKENS and not warned_size:
             warned_size = True

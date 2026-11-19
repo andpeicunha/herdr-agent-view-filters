@@ -94,7 +94,7 @@ class PublishOrderTokens(Isolated):
             "R": ("dev", "Work", None),
             "C": ("logs", None, None),
             "D": ("vim", None, None),
-            "A": ("ops", "Work", None),
+            "A": ("ops", None, None),  # último pane de Work: sem space (só o primeiro tem)
             "S": ("home", "Home", None),
         })
         self.assertTrue(all("tree_ws" not in v for v in t.values()))
@@ -103,9 +103,10 @@ class PublishOrderTokens(Isolated):
         _, t = self.scenario(False)
         self.assertEqual({k: v["order"] for k, v in t.items()},
                          {"R": "0000", "C": "0001", "D": "0002", "A": "0003", "S": "0000"})
-        # D virou standalone: título = tab, sem item
+        # D virou standalone: título = tab; não é o primeiro pane de Work, sem space
         self.assertEqual((t["D"]["title"], t["D"]["space"], t["D"]["sub"]),
-                         ("dev", "Work", None))
+                         ("dev", None, None))
+        self.assertEqual(t["R"]["space"], "Work")
         # R tem filho explícito: sub "├ repo"; C é o único filho -> "└ "
         self.assertEqual((t["R"]["title"], t["R"]["sub"], t["R"]["subtree"], t["R"]["coord"]),
                          ("dev", None, "├", "◆ R"))

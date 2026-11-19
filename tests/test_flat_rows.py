@@ -44,7 +44,8 @@ class FlatInNonPickedModes(Isolated):
     def test_child_row_is_plain_tab_label_in_flat_mode(self):
         tok = publish("active")
         self.assertEqual(tok["C"]["title"], "dev")
-        self.assertEqual(tok["C"]["space"], "Work")
+        self.assertIsNone(tok["C"]["space"])  # não é o primeiro pane de Work (R é)
+        self.assertEqual(tok["R"]["space"], "Work")
         self.assertIsNone(tok["R"]["sub"])
 
 

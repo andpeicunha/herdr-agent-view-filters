@@ -95,10 +95,13 @@ How: the view sort is `[{token: space_rank}, {token: order}, pane_order]` (all a
 - `tree` = `├` / `└` on a child (`picked` only)
 - `subtree` = `├` on a root with children (`picked` only, second row)
 - `coord` = `◆ <root pane name>` on a coordinator row (every mode)
-- `sep` = `─` x 28 and `hdr` = the NEXT space's plain name, both on the LAST agent
-  of every space except the last one (`picked` / `active` only; `space_headers()`).
-  Every other agent gets both as `null`. The retired `pad` token is published as
-  `null` so a stale value clears
+- `space` (`picked` / `active` only) = workspace label on the FIRST agent of each
+  space; every other agent gets `null`. Truncated (`…`) so the title keeps room
+  (`fit_space()`): room = `sidebar_width` (32) - 2 - tree mark - title - 3; room < 6
+  drops `space` entirely. The title is never shortened
+- `sep` = `─` x 20 on the LAST agent of every space except the last one
+  (`picked` / `active` only; `space_bounds()`). Every other agent gets `null`.
+  The retired `hdr` and `pad` tokens are published as `null` so stale values clear
 - `role` = `coordinator` on a coordinator root (every mode)
 - the old `group`, `group_space` and `item` tokens are reported as `null` (cleared);
   `tree_ws`, `repo` and `name` are no longer published (herdr allows at most 16
@@ -197,6 +200,7 @@ picked_new   = "include"   # default; or "exclude"
 group_by_tab = true        # default; false = only parent tokens group
 coordinator_label = "orch" # default; "" = never rename coordinators
 cycle_modes  = ["active", "space", "picked", "all"]  # default; e.g. ["picked", "all"]
+sidebar_width = 32         # default; columns of the Herdr agent row (fits `$space` to the title)
 ```
 
 - `picked_new = "include"`: new agents show up in `picked` automatically.
@@ -328,14 +332,17 @@ Per pane, `picked`:
 
 | pane (`picked`) | `$tree` | `$title` | `$space` | `$subtree` | `$sub` | `$coord` |
 | --- | --- | --- | --- | --- | --- | --- |
-| root with children | absent | tab label | workspace label | `├` | display label | absent |
-| coordinator root | absent | tab label | workspace label | `├` | absent | `◆ <root pane name>` |
+| root with children | absent | tab label | workspace label\* | `├` | display label | absent |
+| coordinator root | absent | tab label | workspace label\* | `├` | absent | `◆ <root pane name>` |
 | child | `├` / `└` (last child) | display label | absent | absent | absent | absent |
-| standalone | absent | tab label | workspace label | absent | absent | absent |
+| standalone | absent | tab label | workspace label\* | absent | absent | absent |
+
+\* `$space` only on the FIRST pane of each space (`picked` / `active`); `null` on
+the others. In `space` and `all`, `$space` = workspace label on every agent.
 
 In `active`, `space` and `all` every agent gets a flat row: `$title` = tab label
-(display label when the tab label is empty/numeric), `$space` = workspace label,
-`$tree` / `$subtree` / `$sub` absent. `$coord` still shows on coordinator rows.
+(display label when the tab label is empty/numeric), `$space` = workspace label
+(see the `*` note), `$tree` / `$subtree` / `$sub` absent. `$coord` still shows on coordinator rows.
 Order still follows the tree, but children carry no mark.
 
 Config and plugin must match: a `[ui.sidebar.agents]` layout without `$tree`,
@@ -364,9 +371,10 @@ plugin is active, so the layout below uses the custom tokens only.
 
 ```toml
 [ui.sidebar.agents]
-# $title / $sub / $tree / $subtree / $coord / $sep / $hdr come from the agent-view-filters
-# plugin (one token per color). $sep = "─" line and $hdr = next space's name, on the
-# last agent of each space (except the last space): they sit below that group.
+# $title / $space / $sub / $tree / $subtree / $coord / $sep come from the
+# agent-view-filters plugin (one token per color). $space = workspace name, on the
+# first agent of each space only (cut to fit beside the title). $sep = "─" line on
+# the last agent of each space (except the last space): it sits below that group.
 # Every row after the first is indented 2 cols by Herdr, so titles line up.
 # $tree = child mark, $subtree = root mark, $coord = "◆ <root pane name>"
 # (coordinator only). Herdr joins adjacent values with " · " (no glue option) and
@@ -375,10 +383,9 @@ plugin is active, so the layout below uses the custom tokens only.
 # icon-only until the plugin's first sync.
 row_gap = 0
 rows = [
-  ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }],
+  ["state_icon", { token = "$tree", fg = "#555a66" }, { token = "$title", fg = "#f8f8f2", bold = true }, { token = "$space", fg = "#6272a4" }],
   [{ token = "$subtree", fg = "#555a66" }, { token = "$sub", fg = "#f8f8f2" }, { token = "$coord", fg = "#bd93f9", bold = true }],
   [{ token = "$sep", fg = "#44475a" }],
-  [{ token = "$hdr", fg = "#6272a4", bold = true }],
 ]
 ```
 
