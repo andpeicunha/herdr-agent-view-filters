@@ -54,11 +54,11 @@ class CoordinatorDisplay(Isolated):
 
     def test_child_generic_title_uses_label(self):
         t = run(fake(c_label="worker-x"))
-        self.assertEqual((t["C"]["tree"], t["C"]["title"]), ("└", "worker-x"))
+        self.assertEqual((t["C"]["tree"], t["C"]["leaf"]), ("└", "worker-x"))
 
     def test_child_without_label_uses_cwd_basename(self):
         t = run(fake())
-        self.assertEqual((t["C"]["tree"], t["C"]["title"]), ("└", "my-repo"))
+        self.assertEqual((t["C"]["tree"], t["C"]["leaf"]), ("└", "my-repo"))
 
     def test_group_name_stays_tab_label(self):
         t = run(fake())

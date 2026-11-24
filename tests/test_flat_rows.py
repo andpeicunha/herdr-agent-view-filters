@@ -57,7 +57,7 @@ class TreeMarksOnlyInPicked(Isolated):
         self.assertEqual(tok["R"]["coord"], "\u25c6 R")
         self.assertIsNone(tok["R"]["sub"])
         self.assertEqual(tok["C"]["tree"], "\u2514")
-        self.assertEqual(tok["C"]["title"], "logs")
+        self.assertEqual(tok["C"]["leaf"], "logs")
         self.assertIsNone(tok["C"]["coord"])
         self.assertIsNone(tok["A"]["sub"])
         self.assertIsNone(tok["A"]["tree"])
@@ -88,7 +88,7 @@ class TreeCoordLifecycle(Isolated):
         tok = run_publish(agents, panes).tokens()
         self.assertEqual(tok["C1"]["tree"], "\u251c")  # não-último: ├
         self.assertEqual(tok["C2"]["tree"], "\u2514")  # último: └
-        self.assertEqual((tok["C1"]["title"], tok["C2"]["title"]), ("logs", "vim"))
+        self.assertEqual((tok["C1"]["leaf"], tok["C2"]["leaf"]), ("logs", "vim"))
         self.assertEqual(tok["R"]["subtree"], "\u251c")
 
     def test_tree_cleared_when_child_becomes_root(self):

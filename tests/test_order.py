@@ -90,7 +90,7 @@ class PublishOrderTokens(Isolated):
             "S": ("0001", "0000"),
         })
         # layout D: root = (tab, space, sub "├ repo" only with children)
-        self.assertEqual({k: (v["title"], v["space"], v["sub"]) for k, v in t.items()}, {
+        self.assertEqual({k: (v["title"] or v["leaf"], v["space"], v["sub"]) for k, v in t.items()}, {
             "R": ("dev", "Work", None),
             "C": ("logs", None, None),
             "D": ("vim", None, None),

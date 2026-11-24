@@ -319,6 +319,7 @@ The plugin publishes one token per part of the row, so each part can have its
 own color. Names are never glued to marks in the token values:
 
 - `$title` / `$space`: tab label and workspace label (flat rows and roots/standalone).
+- `$leaf`: tab label of a child row (the one with `$tree`). Lets the config color the group name (`$title`) apart from its children; add it next to `$title` in the first row, or children lose their name.
 - `$sub`: display label of a root with children (second row). Herdr indents every
   row after the first of an agent by 2 columns. Herdr hides a row when none of its
   tokens has a value.

@@ -1241,6 +1241,11 @@ def publish_tokens(agents=None, tree=None, snap=None, mode="picked"):
         if sep_mode:
             row["space"] = (fit_space(row["space"], row["title"], row["tree"], width)
                             if pane_id in firsts else None)
+        # `$leaf` = title of a child row (has `$tree`), so the config can color the
+        # group name (`$title`, roots/standalone) apart from its children.
+        row["leaf"] = None
+        if tree_mark is not None and row["title"]:
+            row["leaf"], row["title"] = row["title"], None
         tokens = {
             "space_rank": f"{rank[space_key[pane_id]]:04d}" if pane_id in space_key else None,
             "order": f"{order_idx[pane_id]:04d}" if pane_id in order_idx else None,
